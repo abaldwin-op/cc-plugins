@@ -56,6 +56,13 @@ writeFileSync(
     .join("\n") + "\n",
 );
 
+// Agent team led by the FULL session (implicit team name: "session-" + first 8 chars of its id).
+mkdirSync(join(home, ".claude", "teams", "session-check-fu"), { recursive: true });
+writeFileSync(
+  join(home, ".claude", "teams", "session-check-fu", "config.json"),
+  JSON.stringify({ name: "session-check-fu", leadAgentId: "lead@t", leadSessionId: "check-full", members: [{ agentId: "lead@t", name: "team-lead" }, { agentId: "r@t", name: "researcher" }, { agentId: "w@t", name: "writer" }] }),
+);
+
 // --- fixtures --------------------------------------------------------------------------------
 const reset5h = new Date(Date.now() + 3 * 3600e3).toISOString();
 const reset7d = new Date(Date.now() + 4 * 24 * 3600e3).toISOString();
@@ -71,7 +78,7 @@ const FULL = {
   cost: { total_cost_usd: 3.2, total_duration_ms: 3600e3, total_api_duration_ms: 900e3, total_lines_added: 10, total_lines_removed: 3 },
   context_window: { context_window_size: 200000, current_usage: { input_tokens: 50000, output_tokens: 1200, cache_creation_input_tokens: 5000, cache_read_input_tokens: 90000 } },
   prompt_cache: { warm: true, caching_observed: true, expires_at: Math.floor(Date.now() / 1000) + 2400, misses: 2, hit_ratio: 0.91, last_miss_cause: { causes: ["tools_changed"] } },
-  rate_limits: { five_hour: { used_percentage: 42, resets_at: reset5h }, seven_day: { used_percentage: 88, resets_at: reset7d }, spend_limit: { used_percentage: 130, resets_at: Math.floor(Date.now() / 1000) + 20 * 86400 } },
+  rate_limits: { five_hour: { used_percentage: 42, resets_at: reset5h }, seven_day: { used_percentage: 88, resets_at: reset7d }, spend_limit: { used_percentage: 130, resets_at: Math.floor(Date.now() / 1000) + 20 * 86400, used_usd: 65, limit_usd: 50, period: "monthly" } },
   effort: { level: "max" },
   thinking: { enabled: true },
   fast_mode: true,
@@ -96,7 +103,7 @@ const COLUMNS = [40, 60, 80, 100, 140, 220];
 const LINES = [8, 12, 24, 40, 60, null]; // null → LINES unset (piped / older CC)
 
 // --- helpers (mirrors of the script's own width math) ------------------------------------------
-const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(/\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g, ""); // SGR + OSC 8 links
 const isWide = (c) => (c >= 0xe000 && c <= 0xf8ff) || (c >= 0xf0000 && c <= 0xffffd) || (c >= 0x100000 && c <= 0x10fffd);
 const vlen = (s) => {
   let w = 0;
@@ -107,8 +114,8 @@ const BLANK = "⠀";
 const SECTIONS = 10; // entries in sectionSpecs
 const WRAP_HEADROOM = 4;
 
-function render(script, payload, cols, lines) {
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TEMP: temp, TMP: temp, COLUMNS: String(cols) };
+function render(script, payload, cols, lines, extraEnv = {}) {
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TEMP: temp, TMP: temp, COLUMNS: String(cols), ...extraEnv };
   if (lines) env.LINES = String(lines);
   else delete env.LINES;
   return spawnSync(process.execPath, [script], { input: JSON.stringify(payload), env, encoding: "utf8", windowsHide: true });
@@ -126,9 +133,9 @@ const expect = (where, ok, msg) => {
 };
 
 // --- main dashboard ----------------------------------------------------------------------------
-function checkDashboard(name, payload, cols, lines) {
+function checkDashboard(name, payload, cols, lines, extraEnv = {}, labels = true) {
   const where = `${name} @ ${cols}x${lines ?? "?"}`;
-  const r = render(MAIN, payload, cols, lines);
+  const r = render(MAIN, payload, cols, lines, extraEnv);
   expect(where, r.status === 0 && !r.error, `exit ${r.status} ${r.error?.message || ""} ${r.stderr}`);
   if (r.status !== 0) return null;
   expect(where, !r.stderr, `stderr: ${r.stderr.trim()}`);
@@ -145,7 +152,7 @@ function checkDashboard(name, payload, cols, lines) {
     // A squeezed row must still say SOMETHING: "Limits  󰊚 …" is a row that costs height and
     // carries no data. Continuation rows (Braille indent) are exempt — the data sits above them.
     if (line.startsWith(BLANK)) continue;
-    const body = stripAnsi(line).slice(9).replace(/…$/, "").replace(/\s+/g, "");
+    const body = stripAnsi(line).slice(labels ? 9 : 0).replace(/…$/, "").replace(/\s+/g, "");
     expect(where, body.length > 1, `row carries no data: ${JSON.stringify(stripAnsi(line))}`);
   }
   // Invariant 1 (short terminal): at most a third of LINES, never more than sections + headroom.
@@ -174,6 +181,37 @@ console.log(grid.join("\n"));
   const short = checkDashboard("hwm-short", { ...MINIMAL, session_id: sid, cwd: here }, 60, 60);
   if (tall && short) expect("hwm @ 60x60", short.lines >= tall.lines, `height shrank ${tall.lines} → ${short.lines} between renders`);
 }
+// Payload features the FULL fixture exercises: team roll-up, spend-limit dollars, clickable PR.
+{
+  const res = checkDashboard("features", FULL, 220, null);
+  const plain = res ? stripAnsi(res.out) : "";
+  expect("team widget", /2 \(researcher, writer\)/.test(plain), "Activity row lacks the 2-teammate roll-up");
+  expect("spend usd", /\$65\.00\/\$50/.test(plain), "Sp gauge lacks $used/$limit");
+  expect("pr link", res && res.out.includes("\x1b]8;;https://example.invalid/pr/7\x07#7\x1b]8;;\x07"), "PR number is not an OSC 8 link");
+}
+
+// User config (~/.claude/statusline-dashboard.json, here via CLAUDE_STATUSLINE_CONFIG): row
+// selection + order, hidden widgets, no labels, no bars, a row cap — invariants must still hold.
+{
+  const cfgFile = join(sandbox, "sl-config.json");
+  writeFileSync(cfgFile, JSON.stringify({ rows: ["info", "model", "limits", "repo"], hide: ["info.version", "repo.tag", "limits.5h"], labels: false, bars: false, clock: "12h", maxRows: 3, usageApi: false }));
+  const env = { CLAUDE_STATUSLINE_CONFIG: cfgFile };
+  for (const cols of COLUMNS) for (const lines of LINES) checkDashboard("custom", FULL, cols, lines, env, false);
+  const res = checkDashboard("custom-shape", FULL, 220, 60, env, false);
+  const plain = res ? stripAnsi(res.out) : "";
+  expect("custom", res && res.lines <= 3, `maxRows 3 but ${res?.lines} rows`);
+  expect("custom", !/Model|Limits|Info\./.test(plain), "labels:false still renders labels");
+  expect("custom", !/v2\.1\.283|5h /.test(plain), "hidden widgets still render");
+  expect("custom", !/7dF|Cr /.test(plain), "usageApi:false still renders usage-API gauges");
+  expect("custom", !res?.out.includes("█"), "bars:false still renders bars");
+  const infoAt = plain.indexOf("invariant probe"); // session name → Info. row
+  expect("custom", infoAt >= 0 && infoAt < plain.indexOf("Fable"), "rows not in configured order (info before model)");
+  // A broken config file must degrade to the stock dashboard, not a blank one.
+  writeFileSync(cfgFile, "{ not json");
+  const broken = checkDashboard("custom-broken", FULL, 220, 60, env);
+  expect("custom-broken", broken && /Model/.test(stripAnsi(broken.out)), "broken config did not fall back to defaults");
+}
+
 // Robustness: empty and non-JSON stdin must exit 0 silently (CC feeds us whatever it has).
 for (const [label, input] of [["empty stdin", ""], ["garbage stdin", "not json"]]) {
   const r = spawnSync(process.execPath, [MAIN], { input, env: { ...process.env, HOME: home, TEMP: temp, TMP: temp }, encoding: "utf8", windowsHide: true });

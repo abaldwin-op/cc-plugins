@@ -70,8 +70,7 @@ const gPerson = cp(0xf0004); // nf-md-account (MD — the FA user glyph is tofu 
 const gFleet = cp(0xf037a); // nf-md-monitor_multiple — OTHER live Claude Code sessions on this machine
 const gVim = cp(0xe62b); // nf-dev-vim
 const gCommand = cp(0xf120); // nf-fa-terminal
-const gPeak = cp(0xf185); // nf-fa-sun_o
-const gOffPeak = cp(0xf186); // nf-fa-moon_o
+const gTeam = cp(0xf0849); // nf-md-account_group — agent team this session leads; codepoint verified against glyphnames.json
 const gConfig = cp(0xf085); // nf-fa-gears
 const gTag = cp(0xf02b); // nf-fa-tag
 const gPaper = cp(0xf0f6); // nf-fa-file_text_o (docs)
@@ -121,6 +120,42 @@ function readPositiveInt(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
+
+// USER CONFIG — ~/.claude/statusline-dashboard.json (CLAUDE_STATUSLINE_CONFIG overrides the path).
+// It lives under ~/.claude, not next to this script, so a checkout install and a plugin install
+// (which runs a staged copy from the plugin data dir) read the SAME file, and a plugin update or a
+// `git pull` can never clobber it. Every key is optional; anything missing, mistyped or unknown
+// falls back to the default, so a broken file degrades to the stock dashboard instead of a blank
+// one. Reference: README "Configuration"; `/statusline-dashboard:configure` edits it for you.
+//   rows     — which rows render, in what order (ids below). Default: all, in the stock order.
+//   hide     — widget ids to drop ("host.os", "usage.api", …) or whole rows ("exts").
+//   labels   — false drops the "Model / Limits / …" column (reclaims 9 cells per row).
+//   bars     — false renders every gauge in its compact (no-bar) form.
+//   pace     — false drops the signed pace balance from the Limits gauges.
+//   clock    — "24h" (default) or "12h".
+//   usageApi — false never reads the OAuth token or calls the usage API (scoped weekly + Cr gauges).
+//   maxRows  — cap on content rows; can only LOWER the built-in budget (a third of the terminal).
+const ROW_IDS = ["model", "limits", "usage", "turn", "activity", "repo", "config", "exts", "host", "info"];
+const CONFIG_PATH = process.env.CLAUDE_STATUSLINE_CONFIG || join(HOME, ".claude", "statusline-dashboard.json");
+const cfg = (() => {
+  const raw = readJson(CONFIG_PATH);
+  const u = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const ids = (v) => (Array.isArray(v) ? v.map((s) => String(s).toLowerCase().replace(/\.$/, "")) : null);
+  const hide = new Set(ids(u.hide) || []);
+  const picked = ids(u.rows)?.filter((r, i, a) => ROW_IDS.includes(r) && a.indexOf(r) === i);
+  return {
+    rows: (picked?.length ? picked : ROW_IDS).filter((r) => !hide.has(r)),
+    hide,
+    labels: u.labels !== false,
+    bars: u.bars !== false,
+    pace: u.pace !== false,
+    clock12: String(u.clock || "").toLowerCase() === "12h",
+    usageApi: u.usageApi !== false,
+    maxRows: readPositiveInt(u.maxRows, Infinity),
+  };
+})();
+// Widget gate: `on("host.os")` is false when the user hid that widget.
+const on = (id) => !cfg.hide.has(id);
 
 // Fill color: gray (BARLO) when low → yellow ≥70 → red ≥90 (original scheme). The track was
 // darkened to 236 so the gray fill keeps clear contrast against it without needing a fill hue.
@@ -1401,55 +1436,6 @@ function agentStatus(transcript, transcriptPath) {
   return { active, completed: transcript.completedAgentCount };
 }
 
-function pacificTime() {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Los_Angeles",
-    hourCycle: "h23",
-    hour: "numeric",
-    minute: "numeric",
-    weekday: "short",
-  }).formatToParts(new Date());
-
-  const weekday = parts.find((p) => p.type === "weekday")?.value || "Sun";
-  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  return {
-    hour: Number(parts.find((p) => p.type === "hour")?.value) || 0,
-    minute: Number(parts.find((p) => p.type === "minute")?.value) || 0,
-    dayOfWeek: dayMap[weekday] ?? 0,
-  };
-}
-
-function peakStatus() {
-  const pt = pacificTime();
-  const isWeekday = pt.dayOfWeek >= 1 && pt.dayOfWeek <= 5;
-  const isPeak = isWeekday && pt.hour >= 5 && pt.hour < 11;
-  const currentMinutes = pt.hour * 60 + pt.minute;
-
-  let minutesToTransition;
-  if (isPeak) {
-    minutesToTransition = 11 * 60 - currentMinutes;
-  } else if (isWeekday && currentMinutes < 5 * 60) {
-    minutesToTransition = 5 * 60 - currentMinutes;
-  } else {
-    let daysUntilNextWeekday;
-    if (pt.dayOfWeek === 5) daysUntilNextWeekday = 3;
-    else if (pt.dayOfWeek === 6) daysUntilNextWeekday = 2;
-    else if (pt.dayOfWeek === 0) daysUntilNextWeekday = 1;
-    else daysUntilNextWeekday = 1;
-
-    minutesToTransition = (24 * 60 - currentMinutes) + (daysUntilNextWeekday - 1) * 24 * 60 + 5 * 60;
-  }
-
-  return { isPeak, minutesToTransition };
-}
-
-function defaultEffort(modelId, displayName) {
-  const s = `${modelId || ""} ${displayName || ""}`.toLowerCase();
-  if (s.includes("opus")) return "xhigh";
-  if (s.includes("sonnet")) return "medium";
-  return "high";
-}
-
 // Effort level, styled to echo Claude Code's /effort menu. The menu's xhigh shimmer and max rainbow
 // are ANIMATED; a 60s-refresh status line can't animate, so the higher tiers get a smooth static
 // TRUECOLOR (24-bit) gradient instead — the same kind of soft hue-blend CC uses for its own gradient
@@ -1548,7 +1534,8 @@ function osBadge() {
   return { icon: gLinux, color: c256(208), label };
 }
 
-function rlBlock(node, label, fmt, windowMs) {
+// `extra` is appended to both forms (e.g. the spend limit's "$used/$limit").
+function rlBlock(node, label, fmt, windowMs, extra = "") {
   const pct = node?.used_percentage ?? node?.utilization;
   if (pct === null || pct === undefined || pct === "") return null;
   const p = Math.round(Number(pct));
@@ -1563,14 +1550,15 @@ function rlBlock(node, label, fmt, windowMs) {
   const resetMs = toEpochMs(node.resets_at ?? node.reset_at);
   const elapsed = Number.isFinite(resetMs) && windowMs ? Date.now() - (resetMs - windowMs) : NaN;
   const expected = elapsed > 0 ? Math.min(100, (elapsed / windowMs) * 100) : NaN;
-  if (expected > 0) {
+  if (expected > 0 && cfg.pace) {
     const bal = Math.round(expected - p);
     pace = ` ${bal > 2 ? GREEN : bal < -2 ? YELLOW : SOFT}${bal >= 0 ? "+" : ""}${bal}%${RESET}`;
   }
   // full = with bar; compact = no bar (packer falls back to this when the bar won't fit,
   // so a gauge degrades gracefully instead of getting truncated with an ellipsis).
-  const full = `${SOFT}${label}${RESET} ${makeBar(p, 10, usageColor(p))} ${usageColor(p)}${p}%${RESET}${rt ? ` ${SOFT}${rt}${RESET}` : ""}${pace}`;
-  const compact = `${SOFT}${label}${RESET} ${usageColor(p)}${p}%${RESET}${rt ? ` ${SOFT}(${rt})${RESET}` : ""}${pace}`;
+  const compact = `${SOFT}${label}${RESET} ${usageColor(p)}${p}%${RESET}${extra}${rt ? ` ${SOFT}(${rt})${RESET}` : ""}${pace}`;
+  if (!cfg.bars) return [p, compact, compact];
+  const full = `${SOFT}${label}${RESET} ${makeBar(p, 10, usageColor(p))} ${usageColor(p)}${p}%${RESET}${extra}${rt ? ` ${SOFT}${rt}${RESET}` : ""}${pace}`;
   return [p, full, compact];
 }
 
@@ -1636,7 +1624,7 @@ async function fetchUsage(ttlMs = USAGE_TTL_MS) {
     Accept: "application/json",
     Authorization: `Bearer ${token}`,
     "anthropic-beta": "oauth-2025-04-20",
-    "User-Agent": "claude-statusline/1.0",
+    "User-Agent": "statusline-dashboard/1.1",
   };
 
   // Timeouts are GENEROUS (8s): this only ever runs in the detached refresh child, never on the
@@ -1725,9 +1713,11 @@ const settings = readJson(join(HOME, ".claude", "settings.json")) || {};
 const transcript = parseTranscript(data.transcript_path);
 const acc = accumulateStats(data.transcript_path, data.session_id);
 
-const modelId = data.model?.id || "";
 const model = data.model?.display_name || "Unknown Model";
-const effort = data.effort?.level || settings.effortLevel || defaultEffort(modelId, model);
+// Effort comes ONLY from stdin: CC omits `effort` exactly when the model has no reasoning-effort
+// parameter, so a guessed default (settings.effortLevel / a per-model table, as this used to do)
+// showed a level on models that don't have one.
+const effort = data.effort?.level ?? "";
 const fastMode = (data.fast_mode ?? settings.fastMode) === true; // stdin is live session truth; settings is the pre-2.1.x fallback
 
 const usage = data.context_window?.current_usage;
@@ -1736,7 +1726,6 @@ const inputTokens = usage
   ? (Number(usage.input_tokens) || 0) + (Number(usage.cache_creation_input_tokens) || 0) + (Number(usage.cache_read_input_tokens) || 0)
   : 0;
 const outputTokens = usage ? Number(usage.output_tokens) || 0 : Number(data.context_window?.total_output_tokens) || 0;
-const sessionOutputTokens = Number(data.context_window?.total_output_tokens) || outputTokens;
 const officialUsed = data.context_window?.used_percentage;
 const usedInt = officialUsed !== null && officialUsed !== undefined && officialUsed !== ""
   ? Math.round(Number(officialUsed))
@@ -1757,20 +1746,41 @@ const elapsedMinutes = elapsedMs / 60000;
 // models; verified in the v2.1.226 payload builder) and, since v2.1.251, `spend_limit` for users
 // behind a Claude apps gateway. Per-model scoped weeklies + usage credits are API-only (below).
 // Each window may be independently absent — CC drops one once its resets_at passes.
-const rl5 = rlBlock(data.rate_limits?.five_hour, "5h", "auto", 5 * 3600e3); // day abbrev only if it rolls to next day
-const rl7 = rlBlock(data.rate_limits?.seven_day, "7d", "ddd HH:mm", 7 * 24 * 3600e3);
+const rl5 = on("limits.5h") ? rlBlock(data.rate_limits?.five_hour, "5h", "auto", 5 * 3600e3) : null; // day abbrev only if it rolls to next day
+const rl7 = on("limits.7d") ? rlBlock(data.rate_limits?.seven_day, "7d", "ddd HH:mm", 7 * 24 * 3600e3) : null;
 // SPEND LIMIT (gateway): % of the spend cap that applies to you + when its period resets. The
-// period LENGTH isn't in the payload, so there's no budget line to pace against (windowMs 0 → no
-// pace suffix), and the percentage runs PAST 100 once over the cap — shown verbatim in red; the
-// bar clamps itself. Distinct from `Cr` below, which is claude.ai usage-credit overage in dollars.
-const rlSp = rlBlock(data.rate_limits?.spend_limit, "Sp", "date", 0);
+// percentage runs PAST 100 once over the cap — shown verbatim in red; the bar clamps itself.
+// CC v2.1.284+ adds `used_usd`/`limit_usd` (shown as "$used/$limit") and `period`
+// (daily/weekly/monthly), which gives the window length the pace balance needs: the period
+// started one day/week/calendar month before resets_at. No period (older CC/gateway) → windowMs 0
+// → no pace suffix. Distinct from `Cr` below, which is claude.ai usage-credit overage.
+let rlSp = null;
+{
+  const sl = data.rate_limits?.spend_limit;
+  const resetMs = toEpochMs(sl?.resets_at);
+  let spWindow = 0;
+  if (sl?.period === "daily") spWindow = 24 * 3600e3;
+  else if (sl?.period === "weekly") spWindow = 7 * 24 * 3600e3;
+  else if (sl?.period === "monthly" && Number.isFinite(resetMs)) {
+    const start = new Date(resetMs);
+    start.setMonth(start.getMonth() - 1);
+    spWindow = resetMs - start.getTime();
+  }
+  const usd = Number(sl?.used_usd);
+  const lim = Number(sl?.limit_usd);
+  const money = Number.isFinite(usd) && sl?.used_usd != null
+    ? ` ${VAL}${formatCost(usd)}${RESET}${Number.isFinite(lim) && lim > 0 ? `${SOFT}/$${Math.round(lim)}${RESET}` : ""}`
+    : "";
+  if (on("limits.spend")) rlSp = rlBlock(sl, "Sp", "date", spWindow, money);
+}
 // The extra gauges are API-only — only bother for Pro/Max sessions (rate_limits present in stdin).
 // A gateway session carries spend_limit ALONE and has no claude.ai OAuth usage to read — skip it
 // (but an EMPTY rate_limits still counts as Pro/Max: CC drops both windows right after they reset).
 // Serve the cached response INSTANTLY; refresh out-of-band when stale (never await the network here).
+// usageApi:false (config) skips all of it — no token read, no network, no scoped/Cr gauges.
 let usageData = null;
 const rlIn = data.rate_limits;
-if (rlIn && !(rlIn.spend_limit && !rlIn.five_hour && !rlIn.seven_day)) {
+if (cfg.usageApi && (on("limits.scoped") || on("limits.credits")) && rlIn && !(rlIn.spend_limit && !rlIn.five_hour && !rlIn.seven_day)) {
   const cached = readUsageCache();
   usageData = cached.data;
   if (!cached.fresh) spawnUsageRefresh();
@@ -1782,7 +1792,7 @@ if (rlIn && !(rlIn.spend_limit && !rlIn.five_hour && !rlIn.seven_day)) {
 // `session`/`weekly_all` kinds duplicate stdin's 5h/7d, so only scoped entries are added. Labeled
 // "7d" + first letter of the scope's model ("Fable" → 7dF), echoing the old 7dS convention.
 const scopedBlocks = [];
-for (const lim of Array.isArray(usageData?.limits) ? usageData.limits : []) {
+for (const lim of on("limits.scoped") && Array.isArray(usageData?.limits) ? usageData.limits : []) {
   if (lim?.kind !== "weekly_scoped") continue;
   const name = String(lim.scope?.model?.display_name || lim.scope?.surface || "").trim();
   const block = rlBlock(
@@ -1793,7 +1803,7 @@ for (const lim of Array.isArray(usageData?.limits) ? usageData.limits : []) {
   );
   if (block) scopedBlocks.push(block);
 }
-if (!scopedBlocks.length) {
+if (!scopedBlocks.length && on("limits.scoped")) {
   // Legacy-shape fallback (pre-`limits` API): per-model weekly buckets as top-level objects.
   for (const [key, label] of [["seven_day_sonnet", "7dS"], ["seven_day_opus", "7dO"]]) {
     const block = rlBlock(usageData?.[key], label, "ddd HH:mm", 7 * 24 * 3600e3);
@@ -1809,13 +1819,13 @@ let crBlock = null;
 {
   const sp = usageData?.spend;
   const minor = (m) => (Number(m?.amount_minor) || 0) / 10 ** (Number.isFinite(Number(m?.exponent)) ? Number(m.exponent) : 2);
-  if (sp?.enabled && Number(sp.used?.amount_minor) > 0) {
+  if (on("limits.credits") && sp?.enabled && Number(sp.used?.amount_minor) > 0) {
     const used = minor(sp.used);
     const limit = minor(sp.limit);
     const p = Math.round(Number(sp.percent) || (limit > 0 ? (used / limit) * 100 : 0));
     const money = `${VAL}${formatCost(used)}${RESET}${limit > 0 ? `${SOFT}/$${Math.round(limit)}${RESET}` : ""}`;
-    const full = `${SOFT}Cr${RESET} ${makeBar(p, 10, usageColor(p))} ${usageColor(p)}${p}%${RESET} ${money}`;
     const compact = `${SOFT}Cr${RESET} ${usageColor(p)}${p}%${RESET} ${money}`;
+    const full = cfg.bars ? `${SOFT}Cr${RESET} ${makeBar(p, 10, usageColor(p))} ${usageColor(p)}${p}%${RESET} ${money}` : compact;
     crBlock = [p, full, compact];
   }
 }
@@ -1876,9 +1886,9 @@ const sessionSegs = [];
 sessionSegs.push(`${CYAN}${gModel}${RESET} ${BOLD}${model}${fastMode ? ` ${YELLOW}${gSpeed}${RESET}` : ""}${RESET}`);
 // Effort badge, with a thinking lamp tacked on (same packer item, no separator) when extended
 // thinking is on — so AI-reasoning state reads as one unit, e.g. "xhigh 💡". Lamp alone if no effort.
-const thinkMark = data.thinking?.enabled ? ` ${c256(183)}${gThink}${RESET}` : "";
-if (effort) sessionSegs.push(effortStyle(effort) + thinkMark);
-else if (thinkMark) sessionSegs.push(thinkMark.trimStart());
+const thinkMark = data.thinking?.enabled && on("model.thinking") ? ` ${c256(183)}${gThink}${RESET}` : "";
+if (effort && on("model.effort")) sessionSegs.push(effortStyle(effort) + thinkMark);
+else if (thinkMark && on("model.thinking")) sessionSegs.push(thinkMark.trimStart());
 // Context gauge degrades like the rate-limit gauges: bar when the row fits, %-only when it wraps.
 // exceeds_200k_tokens is a FIXED 200k threshold regardless of window size. On an extended-context
 // (>200k) model that's the premium long-context pricing line, so flag it; on a plain 200k model it's
@@ -1887,7 +1897,7 @@ const over200k = data.exceeds_200k_tokens === true && contextSize > 200000 ? ` $
 const ctxPct = `${contextColor(usedInt)}${usedInt}%${RESET} ${SOFT}${formatTokens(inputTokens)}/${formatTokens(contextSize)}${RESET}${over200k}`;
 const ctxFull = `${PINK}${gCtx}${RESET} ${makeBar(usedInt, 10, contextColor(usedInt))} ${ctxPct}`;
 const ctxCompact = `${PINK}${gCtx}${RESET} ${ctxPct}`;
-sessionSegs.push({ alts: [ctxFull, ctxCompact] });
+if (on("model.context")) sessionSegs.push({ alts: [cfg.bars ? ctxFull : ctxCompact, ctxCompact] });
 // cost + duration moved to the Usage row, session-id to Info. — Model row stays lean (AI state only).
 
 
@@ -1912,14 +1922,14 @@ if (rlBlocks.length) {
 // Usage — this session's consumption: total cost, $/h burn, throughput (tok/s), API time, wall-clock.
 // (var stays `rateSegs`; rendered under the "Usage" label.)
 const rateSegs = [];
-rateSegs.push(`${GREEN}${gCost}${RESET} ${VAL}${costStr}${RESET}`); // total $ spent
+if (on("usage.cost")) rateSegs.push(`${GREEN}${gCost}${RESET} ${VAL}${costStr}${RESET}`); // total $ spent
 const apiDurationMs = Number(data.cost?.total_api_duration_ms) || 0;
-if (cost > 0 && elapsedMinutes >= 1) {
+if (cost > 0 && elapsedMinutes >= 1 && on("usage.burn")) {
   const hourlyCost = (cost / elapsedMinutes) * 60;
   const hourlyColor = hourlyCost > 10 ? RED : hourlyCost > 5 ? YELLOW : GREEN;
   rateSegs.push(`${ORANGE}${gCost}${RESET} ${hourlyColor}~${formatCost(hourlyCost)}/h${RESET}`); // burn rate
 }
-if (apiDurationMs > 0 && acc.outputTokens > 0) {
+if (apiDurationMs > 0 && acc.outputTokens > 0 && on("usage.speed")) {
   const tps = acc.outputTokens / (apiDurationMs / 1000); // cumulative output ÷ cumulative API time
   if (Number.isFinite(tps) && tps > 0) {
     rateSegs.push(`${PENCIL}${gSpeed}${RESET} ${VAL}${Math.round(tps)}${RESET} ${SOFT}tok/s${RESET}`);
@@ -1931,16 +1941,16 @@ if (apiDurationMs > 0 && acc.outputTokens > 0) {
 // Tell: API ≈ duration paired with implausibly low tok/s + $/h (the inflated denominator drags both
 // down). That's an upstream CC accounting artifact, NOT a bug here — don't "fix" it by clamping to
 // elapsedMs; that would just mask CC's number. (diagnosed from a real 11.9h-sleep session, 2026-06)
-if (apiDurationMs > 0 && elapsedMs > 0) {
+if (apiDurationMs > 0 && elapsedMs > 0 && on("usage.api")) {
   const apiPct = Math.min(100, Math.round((apiDurationMs / elapsedMs) * 100));
   const apiColor = apiPct > 70 ? YELLOW : VAL;
   rateSegs.push(`${CYAN}${gApi}${RESET} ${apiColor}API ${formatDuration(apiDurationMs)}${RESET}`);
 }
-rateSegs.push(`${SILVER}${gDuration}${RESET} ${VAL}${formatDuration(elapsedMs)}${RESET}`); // wall-clock
+if (on("usage.duration")) rateSegs.push(`${SILVER}${gDuration}${RESET} ${VAL}${formatDuration(elapsedMs)}${RESET}`); // wall-clock
 
 // turn — the last API call's token makeup (In/Out/W/R)
 const turnSegs = [];
-if (usage) {
+if (usage && on("turn.tokens")) {
   const fresh = Number(usage.input_tokens) || 0;
   const cacheWrite = Number(usage.cache_creation_input_tokens) || 0;
   const cacheRead = Number(usage.cache_read_input_tokens) || 0;
@@ -1966,7 +1976,7 @@ if (usage) {
 //            (post-compaction) are deliberately not counted — those are CC working as designed.
 // caching_observed:false = caching off or a gateway that doesn't report it → nothing worth showing.
 const pc = data.prompt_cache;
-if (pc && typeof pc === "object" && pc.caching_observed !== false) {
+if (pc && typeof pc === "object" && pc.caching_observed !== false && on("turn.cache")) {
   const bits = [];
   const hr = Number(pc.hit_ratio);
   if (pc.hit_ratio != null && Number.isFinite(hr)) {
@@ -2000,7 +2010,7 @@ const stateSegs = [];
 // Info. row so it's a stable "where am I" anchor right above the prompt, present in OR out of a repo.
 // (The Repo row no longer carries your location — it's repo-only now.)
 const cwdDisplay = shortenPath(homeRelative(currentDir));
-if (cwdDisplay) stateSegs.push(`${BBLUE}${gDir}${RESET} ${VAL}${cwdDisplay}${RESET}`);
+if (cwdDisplay && on("info.cwd")) stateSegs.push(`${BBLUE}${gDir}${RESET} ${VAL}${cwdDisplay}${RESET}`);
 
 // Host row — everything that comes from the MACHINE: local clock (time is host-derived), OS, user@host.
 //   [clock] HH:mm | [os icon] os/version | [person icon] user@host
@@ -2008,19 +2018,24 @@ if (cwdDisplay) stateSegs.push(`${BBLUE}${gDir}${RESET} ${VAL}${cwdDisplay}${RES
 // user@host: person icon + SSH-prompt style (no spaces around @); user from userInfo() w/ env fallback.
 const hostSegs = [];
 {
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, "0");
-  const mm = String(now.getMinutes()).padStart(2, "0");
-  hostSegs.push(`${WHITE}${gClock}${RESET} ${VAL}${hh}:${mm}${RESET}`);
+  if (on("host.clock")) {
+    const now = new Date();
+    const h = now.getHours();
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const time = cfg.clock12 ? `${h % 12 || 12}:${mm}${h < 12 ? "am" : "pm"}` : `${String(h).padStart(2, "0")}:${mm}`;
+    hostSegs.push(`${WHITE}${gClock}${RESET} ${VAL}${time}${RESET}`);
+  }
 
-  const b = osBadge();
-  hostSegs.push(`${b.color}${b.icon}${RESET} ${VAL}${b.label}${RESET}`);
+  if (on("host.os")) {
+    const b = osBadge();
+    hostSegs.push(`${b.color}${b.icon}${RESET} ${VAL}${b.label}${RESET}`);
+  }
 
   const host = (hostname() || "").split(".")[0]; // drop .local / domain → short hostname
   let user = "";
   try { user = userInfo().username || ""; } catch {}
   if (!user) user = process.env.USERNAME || process.env.USER || "";
-  if (user || host) {
+  if ((user || host) && on("host.user")) {
     const idStr = user && host ? `${VAL}${user}${DIM}@${VAL}${host}${RESET}` : `${VAL}${user || host}${RESET}`;
     hostSegs.push(`${c256(114)}${gPerson}${RESET} ${idStr}`);
   }
@@ -2033,7 +2048,7 @@ const hostSegs = [];
   // process, so an entry only counts after a signal-0 probe proves its pid is still alive.
   // Excluded by sessionId (not pid) so a respawned-in-place session can't count itself. Hidden
   // at 0 — an always-on "no other sessions" widget is noise.
-  {
+  if (on("host.fleet")) {
     const others = [];
     let regFiles = [];
     try { regFiles = readdirSync(join(HOME, ".claude", "sessions")); } catch {}
@@ -2052,56 +2067,52 @@ const hostSegs = [];
   }
 }
 const outputStyle = data.output_style?.name;
-if (outputStyle && outputStyle !== "default") {
+if (outputStyle && outputStyle !== "default" && on("info.style")) {
   stateSegs.push(`${PENCIL}${gStyle}${RESET} ${VAL}${outputStyle}${RESET}`);
 }
 // Claude Code version — a CLIENT/app version, not a machine attribute, so it belongs on the
 // session/client Info. row (here), not the Host row.
-if (data.version) stateSegs.push(`${WHITE}${gVersion}${RESET} ${VAL}v${data.version}${RESET}`);
+if (data.version && on("info.version")) stateSegs.push(`${WHITE}${gVersion}${RESET} ${VAL}v${data.version}${RESET}`);
 // Vim mode — we render it ourselves and suppress Claude's native "-- INSERT --" via the
 // statusLine.hideVimModeIndicator setting (so the mode isn't shown twice). Modes per the docs:
 // NORMAL, INSERT, VISUAL, VISUAL LINE. INSERT=green (editing), VISUAL*=magenta (selection),
 // NORMAL/other=cyan.
-if (data.vim?.mode) {
+if (data.vim?.mode && on("info.vim")) {
   const m = data.vim.mode;
   const vimColor = m === "INSERT" ? GREEN : m.startsWith("VISUAL") ? MAGENTA : CYAN;
   // Vim mode KEEPS italic (exception to the no-italic-in-content rule): it's all-caps, so the
   // cursive isn't distracting and helps it read as a mode indicator.
   stateSegs.push(`${vimColor}${gVim}${RESET} ${ITALIC}${vimColor}${m}${RESET}`);
 }
-// agent.name is the only documented agent field on stdin (the old `agent_type` branch was dead —
-// it's not in the schema). Shown when running under --agent / configured agent settings.
-if (data.agent?.name) {
+// agent.name — shown when running under --agent / configured agent settings. (The docs also list an
+// optional agent.type identifier; the name is the human-facing one, so type isn't shown.)
+if (data.agent?.name && on("info.agent")) {
   stateSegs.push(`${SILVER}${gUser}${RESET} ${VAL}${data.agent.name}${RESET}`);
 }
 // remote — present when the session is attached to a remote/cloud workspace. In the v2.1.226
 // payload builder (`...du()!==null&&{remote:{session_id:...}}`) but NOT yet in the docs schema,
 // so gate defensively on a non-empty id. Cloud glyph reused from the connectors widget.
-if (data.remote?.session_id) stateSegs.push(`${c256(117)}${gCfgConn}${RESET} ${VAL}remote${RESET}`);
+if (data.remote?.session_id && on("info.remote")) stateSegs.push(`${c256(117)}${gCfgConn}${RESET} ${VAL}remote${RESET}`);
 // Session identity — the custom/AI-generated session title (stdin session_name, added ~2.1.x;
 // transcript customTitle as the fallback for older CC) is the human-facing value, with the
 // `claude --resume`-able id (first UUID segment) demoted to DIM parens. No name → the id stays
 // the primary value as before. Default display names ("my-app-3f") never populate session_name.
 const sessionName = truncate(data.session_name || transcript?.sessionName || "", 32);
-if (sessionName) {
+if (!on("info.session")) {
+  // hidden by config
+} else if (sessionName) {
   stateSegs.push(`${SILVER}${gKey}${RESET} ${VAL}${sessionName}${RESET}${sid ? ` ${DIM}(${sid.split("-")[0]})${RESET}` : ""}`);
 } else if (sid) {
   stateSegs.push(`${SILVER}${gKey}${RESET} ${VAL}${sid.split("-")[0]}${RESET}`);
 }
 
-// Peak hours disabled — Anthropic no longer distinguishes peak/off-peak for rate limits
-// (https://aitoolsrecap.com/Blog/anthropic-claude-code-rate-limits-doubled-opus-api-2026).
-// Keeping peakStatus()/pacificTime() in place in case it returns.
-// const peak = peakStatus();
-// stateSegs.push(`${peak.isPeak ? RED : CYAN}${peak.isPeak ? gPeak : gOffPeak}${RESET} ${SOFT}${peak.isPeak ? "Peak" : "Off"} ${formatCountdown(peak.minutesToTransition * 60000)}${RESET}`);
-
 const activitySegs = [];
-if (transcript?.activeSlashCommand?.name) {
+if (transcript?.activeSlashCommand?.name && on("activity.command")) {
   activitySegs.push(`${YELLOW}${gCommand}${RESET} ${VAL}${transcript.activeSlashCommand.name}${RESET}`);
 }
 
 const todo = todoProgress(transcript);
-if (todo && todo.total > 0) {
+if (todo && todo.total > 0 && on("activity.todo")) {
   const donePct = percent(todo.completed, todo.total);
   const todoColor = donePct === 100 ? GREEN : donePct >= 50 ? YELLOW : RED;
   if (todo.current) {
@@ -2111,7 +2122,7 @@ if (todo && todo.total > 0) {
   }
 }
 
-if (acc.toolCalls > 0) {
+if (acc.toolCalls > 0 && on("activity.tool")) {
   const lt = transcript?.lastTool;
   const target = lt ? extractToolTarget(lt.name, lt.input) : null;
   const label = lt ? (target ? `${lt.name}(${target})` : lt.name) : "tool";
@@ -2120,7 +2131,7 @@ if (acc.toolCalls > 0) {
 }
 
 const agents = agentStatus(transcript, data.transcript_path);
-if (agents) {
+if (agents && on("activity.agents")) {
   // Counts-only roll-up — the subagent panel below the prompt already renders each agent's name +
   // description verbatim, so the dashboard deliberately does NOT repeat them. It surfaces only what
   // the panel can't: how many are running, their COMBINED [done/total] task progress (summed across
@@ -2146,11 +2157,31 @@ if (agents) {
   }
 }
 
+// Agent team (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1) — since CC v2.1.178 every session has ONE
+// implicit team, `session-<first 8 of session id>`, recorded at ~/.claude/teams/<team>/config.json
+// ({name, leadAgentId, leadSessionId, members:[{agentId, name, agentType, …}]}; the lead is a member
+// too). Nothing about teams reaches stdin, so this one cheap read is the only way to see it. Shown
+// only once a teammate exists — the file is created with the lead alone — and only when THIS session
+// leads it (leadSessionId), so a stale file from a recycled id prefix can't masquerade. Teammate
+// names in the wide form; their live running/idle state is the agent panel's job (see
+// subagent-statusline.js), the same split as the sub-agent roll-up above.
+if (sid && on("activity.team")) {
+  const team = readJson(join(HOME, ".claude", "teams", `session-${sid.slice(0, 8)}`, "config.json"));
+  if (team && team.leadSessionId === sid && Array.isArray(team.members)) {
+    const mates = team.members.filter((m) => m && m.agentId !== team.leadAgentId).map((m) => String(m.name || "?"));
+    if (mates.length > 0) {
+      const head = `${c256(43)}${gTeam}${RESET} ${VAL}${mates.length}${RESET}`;
+      const list = mates.slice(0, 3).join(", ") + (mates.length > 3 ? ", …" : "");
+      activitySegs.push({ alts: [`${head} ${DIM}(${truncate(list, 40)})${RESET}`, head] });
+    }
+  }
+}
+
 // Session edit volume (+added/−removed lines) — repo-independent (you can edit files outside any
 // repo), so it rides the always-present Activity row, NOT the now repo-only Repo row.
 const linesAdded = Number(data.cost?.total_lines_added) || 0;
 const linesRemoved = Number(data.cost?.total_lines_removed) || 0;
-if (linesAdded > 0 || linesRemoved > 0) {
+if ((linesAdded > 0 || linesRemoved > 0) && on("activity.lines")) {
   const diff = [];
   if (linesAdded > 0) diff.push(`${GREEN}+${linesAdded}${RESET}`);
   if (linesRemoved > 0) diff.push(`${RED}-${linesRemoved}${RESET}`);
@@ -2169,7 +2200,7 @@ if (inRepo) {
   // the remote repo name DIFFERS from the folder headline (fork/rename) — when they match, the
   // name is already the headline and repeating it is noise.
   const repoId = data.workspace?.repo;
-  if (repoId?.owner) {
+  if (repoId?.owner && on("repo.remote")) {
     const host = String(repoId.host || "").toLowerCase();
     const [hostIcon, hostColor] = host.includes("github")
       ? [gGithub, SILVER]
@@ -2182,8 +2213,8 @@ if (inRepo) {
     const id = sameName ? `${VAL}${repoId.owner}${RESET}` : `${VAL}${repoId.owner}${SOFT}/${RESET}${VAL}${repoId.name}${RESET}`;
     locSegs.push(`${hostColor}${hostIcon}${RESET} ${id}`);
   }
-  if (worktree) locSegs.push(`${MAGENTA}${gTree}${RESET} ${VAL}${worktree}${RESET}`);
-  locSegs.push(`${CYAN}${gBranch}${RESET} ${gitStr}`);
+  if (worktree && on("repo.worktree")) locSegs.push(`${MAGENTA}${gTree}${RESET} ${VAL}${worktree}${RESET}`);
+  if (on("repo.branch")) locSegs.push(`${CYAN}${gBranch}${RESET} ${gitStr}`);
   // PR — the current branch's OPEN pull request, straight from Claude Code's native `pr` payload
   // (same source as CC's built-in footer PR badge, added ~v2.1.149): present only while a PR is
   // open, gone the moment it merges/closes — so this appears/disappears exactly like the native
@@ -2194,7 +2225,7 @@ if (inRepo) {
   // changes_requested/draft): green ✓ · red ✗ · yellow ● · dim draft. (CI status isn't in the
   // native payload either — both CI and true multi-PR awareness would need an opt-in `gh` call.)
   const prList = Array.isArray(data.pr) ? data.pr.filter(Boolean) : data.pr ? [data.pr] : [];
-  if (prList.length) {
+  if (prList.length && on("repo.pr")) {
     const prData = prList[0];
     const rs = String(prData.review_state ?? prData.reviewDecision ?? "").toLowerCase();
     let prColor = VAL;
@@ -2210,9 +2241,13 @@ if (inRepo) {
     const isMr = String(prData.kind || "").toLowerCase() === "mr";
     const label = prData.number != null ? `${isMr ? "!" : "#"}${prData.number}` : isMr ? "MR" : "PR";
     const extra = prList.length > 1 ? ` ${SOFT}+${prList.length - 1}${RESET}` : "";
-    locSegs.push(`${MAGENTA}${gPR}${RESET} ${prColor}${label}${RESET}${mark}${extra}`);
+    // The number is an OSC 8 hyperlink to the PR (CC passes OSC 8 through, like its own footer
+    // badge): click to open it in terminals that support links; others just show the text.
+    const url = /^https?:\/\//i.test(String(prData.url || "")) ? String(prData.url) : "";
+    const num = url ? `\x1b]8;;${url}\x07${label}\x1b]8;;\x07` : label;
+    locSegs.push(`${MAGENTA}${gPR}${RESET} ${prColor}${num}${RESET}${mark}${extra}`);
   }
-  if (tagInfo) {
+  if (tagInfo && on("repo.tag")) {
     const tagSuffix = tagInfo.count > 0 ? `${YELLOW}+${tagInfo.count}${RESET}` : "";
     locSegs.push(`${MAGENTA}${gTag}${RESET} ${VAL}${tagInfo.tag}${RESET}${tagSuffix}`);
   }
@@ -2296,7 +2331,7 @@ if (counts) {
   const total = (c) => (c.m || 0) + (c.u || 0) + (c.p || 0) + (c.l || 0) + (c.x || 0);
   const seg = (head, c, { color = SOFT, breakdown = false, caps = "" } = {}) => {
     const base = `${color}${head}${RESET} ${total(c) > 0 ? GREEN : SOFT}${total(c)}${RESET}`;
-    if (breakdown && total(c) > 0) {
+    if (breakdown && total(c) > 0 && on("config.scopes")) {
       const tail = ` ${DIM}(${SCOPES.map((k) => (caps.includes(k) ? c[k] || 0 : "-")).join("/")})${RESET}`;
       // Two alts (widest-first), so packSection DROPS the (m/u/p/l/x) scope breakdown to reclaim
       // width before it has to wrap the row — every item's count stays visible; only the per-scope
@@ -2307,42 +2342,42 @@ if (counts) {
   };
   // Every config widget renders its icon + count (0 included) so an empty category shows at a
   // glance; the breakdown parens appear only once total>0 (an all-0/"-" breakdown is just noise).
-  const show = (head, c, opts) => configSegs.push(seg(head, c, opts));
+  const show = (id, head, c, opts) => on(`config.${id}`) && configSegs.push(seg(head, c, opts));
   // Instruction files — doc icon, NO letter: CLAUDE.md plus any AGENTS.md CC loads natively
   // (v2.1.277+, see configCounts) fold into ONE count — both are "project instructions in context",
   // and which flavor a repo uses isn't worth a second widget. Counted like every other widget: total across the scopes it CAN have,
   // breakdown showing where they live. caps "mupl" — managed/user/project/local; plugins don't
   // provide CLAUDE.md → "-".
-  show(gCfgDoc, counts.claude, { color: c256(36), breakdown: true, caps: "mupl" }); // teal
+  show("instructions", gCfgDoc, counts.claude, { color: c256(36), breakdown: true, caps: "mupl" }); // teal
   // Auto-memory — persistent per-project memory files (~/.claude/projects/<slug>/memory, minus
   // the MEMORY.md index). Sits by CLAUDE.md: both are content that loads into every session.
   // Flat count — one storage location, no scope spread.
-  show(gCfgMemory, counts.memory, { color: c256(177) }); // lilac
+  show("memory", gCfgMemory, counts.memory, { color: c256(177) }); // lilac
   // Agents/Cmds/Skills: User + Project + Plugin (no local/managed form) → caps "upx".
   // (Skills also subsumes output-styles — styles are migrating to skills, deduped by name:
   //  https://support.claude.com/en/articles/10181068-styles-are-moving-to-skills)
-  show(gCfgAgents, counts.agents, { color: c256(211), breakdown: true, caps: "upx" }); // pink
-  show(gCfgCmds, counts.commands, { color: c256(32), breakdown: true, caps: "upx" }); // green
-  show(gCfgSkills, counts.skills, { color: c256(141), breakdown: true, caps: "upx" }); // purple — incl. styles
+  show("agents", gCfgAgents, counts.agents, { color: c256(211), breakdown: true, caps: "upx" }); // pink
+  show("commands", gCfgCmds, counts.commands, { color: c256(32), breakdown: true, caps: "upx" }); // green
+  show("skills", gCfgSkills, counts.skills, { color: c256(141), breakdown: true, caps: "upx" }); // purple — incl. styles
   // Workflows (saved orchestration scripts): User + Project + Plugin → caps "upx".
   // Routines (scheduled agents): User + Project only → caps "up".
-  show(gCfgWorkflows, counts.workflows, { color: c256(78), breakdown: true, caps: "upx" }); // spring green
-  show(gCfgRoutines, counts.routines, { color: c256(173), breakdown: true, caps: "up" }); // terracotta
+  show("workflows", gCfgWorkflows, counts.workflows, { color: c256(78), breakdown: true, caps: "upx" }); // spring green
+  show("routines", gCfgRoutines, counts.routines, { color: c256(173), breakdown: true, caps: "up" }); // terracotta
   // Rules: User + Project only (plugins don't provide these) → caps "up".
-  show(gCfgRules, counts.rules, { color: c256(33), breakdown: true, caps: "up" }); // blue
+  show("rules", gCfgRules, counts.rules, { color: c256(33), breakdown: true, caps: "up" }); // blue
   // MCP & Hooks support every scope (managed + user/project/local + plugin) → caps "muplx".
-  show(gCfgMcp, counts.mcps, { color: c256(216), breakdown: true, caps: "muplx" }); // orange
-  show(gCfgConn, counts.connectors, { color: c256(117) }); // sky — account-level, no breakdown
+  show("mcp", gCfgMcp, counts.mcps, { color: c256(216), breakdown: true, caps: "muplx" }); // orange
+  show("connectors", gCfgConn, counts.connectors, { color: c256(117) }); // sky — account-level, no breakdown
   // claude-in-chrome (built-in browser MCP): brand-colored Chrome glyph + uncolored ✓/✗ for ENABLED
   // (extension installed + toggle on + onboarded). Not a count → no breakdown. Live-connected is
   // session-only, so this is enabled, not connected.
-  configSegs.push(`${c256(75)}${gCfgChrome}${RESET} ${counts.chrome ? gOk : gNo}`);
-  show(gCfgHooks, counts.hooks, { color: c256(220), breakdown: true, caps: "muplx" }); // gold
-  show(gCfgPlugins, counts.plugins, { color: BRICK, breakdown: true, caps: "mupl" }); // LEGO red
+  if (on("config.chrome")) configSegs.push(`${c256(75)}${gCfgChrome}${RESET} ${counts.chrome ? gOk : gNo}`);
+  show("hooks", gCfgHooks, counts.hooks, { color: c256(220), breakdown: true, caps: "muplx" }); // gold
+  show("plugins", gCfgPlugins, counts.plugins, { color: BRICK, breakdown: true, caps: "mupl" }); // LEGO red
   // Themes belong with the multi-scope Config items, not the plugin-only Exts. row: a theme can
   // come from a plugin (x) OR your own ~/.claude/themes/ (u), so it carries a u/x breakdown.
-  show(gCfgTheme, counts.themes, { color: c256(213), breakdown: true, caps: "ux" }); // orchid
-  show(gCfgDirs, counts.dirs, { color: c256(250) }); // silver — session-added dirs
+  show("themes", gCfgTheme, counts.themes, { color: c256(213), breakdown: true, caps: "ux" }); // orchid
+  show("dirs", gCfgDirs, counts.dirs, { color: c256(250) }); // silver — session-added dirs
 
   // Exts. row — plugin-bundled component types that have no home on the Config row. Every widget
   // always renders (0 included), consistent with the Config row, so an empty category shows at a
@@ -2350,11 +2385,11 @@ if (counts) {
   // is the exception — a channel can be installed at USER scope (~/.claude/channels/) OR declared by
   // a plugin, so it carries a u/x breakdown. (Themes is NOT here — it also has a user scope, so it
   // lives on the Config row.)
-  const showC = (head, c, opts) => componentSegs.push(seg(head, c, opts));
-  showC(gCfgLsp, counts.lsp, { color: c256(81) }); // light blue
-  showC(gCfgMonitor, counts.monitors, { color: c256(209) }); // salmon
-  showC(gCfgBin, counts.bin, { color: c256(108) }); // sage
-  showC(gCfgChannel, counts.channels, { color: c256(116), breakdown: true, caps: "ux" }); // sky — user-installed + plugin
+  const showC = (id, head, c, opts) => on(`exts.${id}`) && componentSegs.push(seg(head, c, opts));
+  showC("lsp", gCfgLsp, counts.lsp, { color: c256(81) }); // light blue
+  showC("monitors", gCfgMonitor, counts.monitors, { color: c256(209) }); // salmon
+  showC("bin", gCfgBin, counts.bin, { color: c256(108) }); // sage
+  showC("channels", gCfgChannel, counts.channels, { color: c256(116), breakdown: true, caps: "ux" }); // sky — user-installed + plugin
 }
 
 // Width-aware reflow. Claude Code sets COLUMNS in recent versions. statusLine.padding indents
@@ -2371,8 +2406,9 @@ const padding = readPositiveInt(settings.statusLine?.padding, 0);
 // wrapped or truncated — rows ran long, the real terminal hard-wrapped them back to col 0, and the
 // overflow painted over the reply. A finite fallback keeps reflow conservative instead of overflowing.
 const width = (parseInt(process.env.COLUMNS, 10) || process.stdout.columns || 80) - 2 - padding;
-// Strip SGR color codes so width math counts only visible glyphs.
-const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
+// Strip SGR color codes + OSC 8 hyperlink wrappers (the PR badge) so width math counts only visible glyphs.
+const OSC8_RE = /\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*m/g, "").replace(OSC8_RE, "");
 const isWide = (codePoint) =>
   (codePoint >= 0xe000 && codePoint <= 0xf8ff) ||
   (codePoint >= 0xf0000 && codePoint <= 0xffffd) ||
@@ -2399,6 +2435,12 @@ const truncateVisible = (s, maxVisible) => {
         i += sgr[0].length;
         continue;
       }
+      const osc = /^\x1b\]8;[^\x07\x1b]*(?:\x07|\x1b\\)/.exec(s.slice(i));
+      if (osc) {
+        out += osc[0];
+        i += osc[0].length;
+        continue;
+      }
     }
     const cp = s.codePointAt(i);
     const chLen = cp > 0xffff ? 2 : 1;
@@ -2408,7 +2450,9 @@ const truncateVisible = (s, maxVisible) => {
     visible += w;
     i += chLen;
   }
-  return `${out}…${RESET}`;
+  // A cut inside a link would leave it open and turn the rest of the row into the link — close it.
+  const opens = (out.match(OSC8_RE) || []).length;
+  return `${out}${opens % 2 ? "\x1b]8;;\x07" : ""}…${RESET}`;
 };
 
 // An item carries one or more `alts` ordered WIDEST-first (e.g. a gauge is [full-with-bar,
@@ -2448,10 +2492,11 @@ function packSection(label, segments, lead = "", leadWidth = null, preferDetail 
   // Capitalize the first char — labels render in italic, where title-case reads nicer.
   const labelCap = label.charAt(0).toUpperCase() + label.slice(1);
   const prefixPlain = labelCap.padEnd(SECTION_WIDTH);
-  const prefix = `${BOLD}${ITALIC}${SOFT}${prefixPlain}${RESET} ${lead}`;
+  // labels:false (config) drops the label column entirely — rows start at their lead/first item.
+  const prefix = cfg.labels ? `${BOLD}${ITALIC}${SOFT}${prefixPlain}${RESET} ${lead}` : lead;
   // U+2800 (Braille blank) renders blank but is NOT whitespace, so Claude Code's per-line
   // leading-whitespace strip leaves it intact — keeps wrapped rows aligned under the content.
-  const indentWidth = SECTION_WIDTH + 1 + (leadWidth ?? vlen(lead));
+  const indentWidth = (cfg.labels ? SECTION_WIDTH + 1 : 0) + (leadWidth ?? vlen(lead));
   const indent = cp(0x2800).repeat(indentWidth);
   const maxItemWidth = width - indentWidth; // widest an item can be on its own line
 
@@ -2558,7 +2603,8 @@ const sectionSpecs = [
   // Repo row above is repo-only now), then vim mode (where CC's native "-- INSERT --" used to sit),
   // output-style, version, agent name, and session id.
   ["info.", stateSegs],
-];
+].filter(([label]) => cfg.rows.includes(label.replace(/\.$/, ""))) // config: row selection…
+  .sort((a, b) => cfg.rows.indexOf(a[0].replace(/\.$/, "")) - cfg.rows.indexOf(b[0].replace(/\.$/, ""))); // …and order
 const sections = sectionSpecs.map(([label, segs, lead, leadWidth, preferDetail]) =>
   packSection(label, segs, lead ?? "", leadWidth ?? null, preferDetail ?? false),
 );
@@ -2594,6 +2640,7 @@ const DROP_ORDER = ["exts.", "config", "host", "activity", "turn", "repo", "usag
 const WRAP_HEADROOM = 4; // max wrap rows past the section count, even on a very tall terminal
 const termRows = parseInt(process.env.LINES, 10) || 0; // 0 → unknown (piped tests) → treat as roomy
 const maxContent = Math.min(
+  cfg.maxRows, // config can only LOWER the budget
   sectionSpecs.length + WRAP_HEADROOM,
   termRows > 0 ? Math.max(1, Math.floor(termRows / 3)) : Infinity, // ≤ a third of the terminal
 );
@@ -2634,7 +2681,9 @@ const contentRows = sections.flat().filter(Boolean); // the non-empty section li
 // Final height = max(content, slot floor, this session's high-water mark at this geometry) —
 // see SHRINK above. The floor keeps /clear from dropping rows; the mark keeps a wrap-then-unwrap
 // cycle from dropping them.
-const geom = `${process.env.COLUMNS || ""}x${process.env.LINES || ""}`;
+// The config file's mtime joins the key: hiding rows is a deliberate shrink, so a config edit resets
+// the mark like a resize does instead of padding the new, shorter layout up to the old height.
+const geom = `${process.env.COLUMNS || ""}x${process.env.LINES || ""}|${statMtime(CONFIG_PATH)}`;
 const hwmFile =
   (process.env.TEMP || process.env.TMP || "/tmp").replace(/\\/g, "/") + "/sl-hwm-" + hashPath(sid || "nosid") + ".json";
 const prevHwm = readJson(hwmFile);

@@ -5,8 +5,11 @@
 // statusline.js dashboard.
 //
 // Input (one JSON object on stdin): the base hook fields plus `columns` (usable row width) and a
-// `tasks` array; each task has { id, name, type, status, description, label, startTime, tokenCount,
-// tokenSamples, cwd }.
+// `tasks` array; each task has { id, name, type, agentType, status, description, label, startTime,
+// model, effort, contextWindowSize, tokenCount, tokenSamples, cwd }. `type` is "local_agent" for a
+// sub-agent and "in_process_teammate" for an agent-team teammate; `label` is the agent's live
+// progress summary (falling back to its description); `agentType` (CC v2.1.293+) is the subagent
+// type, e.g. "Explore".
 // Output: one JSON line per row you want to OVERRIDE, in the form {"id": "<task id>", "content": "<row>"}.
 //   - Omit a task's id to keep Claude Code's default rendering for that row.
 //   - Emit an empty `content` string to hide a row.
@@ -14,7 +17,11 @@
 // Docs: https://code.claude.com/docs/en/statusline#subagent-status-lines
 //
 // Configure in settings.json (or run `bun install.js` next to this file / the setup skill):
-//   { "subagentStatusLine": { "type": "command", "command": "bun \"/path/to/claude-statusline/plugins/statusline-dashboard/subagent-statusline.js\"" } }
+//   { "subagentStatusLine": { "type": "command", "command": "bun \"/path/to/cc-plugins/plugins/statusline-dashboard/subagent-statusline.js\"" } }
+
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const esc = "\x1b";
 const RESET = `${esc}[0m`;
@@ -32,6 +39,21 @@ const gDone = cp(0x2714) + cp(0xfe0e); // ✔︎ text-presentation (never emoji)
 const gErr = cp(0x2718) + cp(0xfe0e); // ✘︎
 const gRun = cp(0x25cf); // ● running
 const gPend = cp(0x25cb); // ○ pending
+const gIdle = cp(0x25cc); // ◌ idle (a teammate waiting for its next message)
+const gTeam = cp(0xf0849); // nf-md-account_group — agent-team teammate (matches the dashboard's team widget)
+
+// Same user config file as statusline.js (~/.claude/statusline-dashboard.json); this script reads
+// only its `hide` list, for the "subagent.*" ids. Missing/broken file → nothing hidden.
+const hidden = (() => {
+  try {
+    const path = process.env.CLAUDE_STATUSLINE_CONFIG || join(homedir(), ".claude", "statusline-dashboard.json");
+    const h = JSON.parse(readFileSync(path, "utf8"))?.hide;
+    return new Set(Array.isArray(h) ? h.map((x) => String(x).toLowerCase()) : []);
+  } catch {
+    return new Set();
+  }
+})();
+const on = (id) => !hidden.has(id);
 
 // --- shared primitives (kept self-contained so this script has no dependency on statusline.js) ---
 function formatTokens(tokens) {
@@ -110,6 +132,10 @@ function normalizeStatus(status) {
     case "failed":
     case "error":
       return "error";
+    case "killed":
+    case "stopped":
+    case "cancelled":
+      return "stopped";
     default:
       return status;
   }
@@ -125,6 +151,10 @@ function statusStyle(s) {
       return { color: RED, glyph: gErr };
     case "pending":
       return { color: DIM, glyph: gPend };
+    case "idle":
+      return { color: DIM, glyph: gIdle };
+    case "stopped":
+      return { color: SOFT, glyph: gErr };
     default:
       return { color: SOFT, glyph: gPend };
   }
@@ -137,30 +167,46 @@ const GENERIC_NAMES = new Set(["internal_agent", "local_agent", "agent"]);
 // Per-agent model + effort (each task carries `model`, `effort`, `contextWindowSize` since CC
 // ~2.1.2xx). Strip the "claude-" prefix so "claude-opus-5" reads "opus-5"; effort appended plain.
 // One dim string — metadata, not the row's signal.
+// Elapsed since the agent started (startTime is epoch ms): "45s", "12m", "1h05m".
+function elapsed(startTime) {
+  const ms = Date.now() - Number(startTime);
+  if (!Number.isFinite(ms) || ms < 0 || !Number(startTime)) return "";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
+}
+
 function modelEffort(task) {
   const model = String(task.model || "").replace(/^claude-/, "").replace(/-\d{8}$/, ""); // drop date suffix ("haiku-4-5-20251001" → "haiku-4-5")
   return [model, task.effort].filter(Boolean).join(" ");
 }
 
-// Row body: [robot] name · dim description · dim model+effort · [status glyph] · NNk tok — clamped
-// to the row width.
+// Row body: [robot|team] name · dim progress · dim model+effort · [status glyph] · elapsed · NNk tok
+// — clamped to the row width.
 function renderRow(task, cols) {
-  const name = String(task.name || task.type || "agent");
+  // A generic CC name ("local_agent") yields to the subagent type when CC sends one ("Explore").
+  const name = String((!GENERIC_NAMES.has(task.name) && task.name) || task.agentType || task.name || task.type || "agent");
   const st = statusStyle(normalizeStatus(task.status));
+  // Teammates get the team glyph, so a mixed panel reads "who's on the team" vs "who's a helper".
+  const icon = task.type === "in_process_teammate" ? gTeam : gAgent;
+  // `label` is the LIVE progress summary (what the agent is doing now), else the description.
+  const text = (on("subagent.label") && typeof task.label === "string" && task.label.trim()) || task.description;
   const sep = ` ${DIM}·${RESET} `;
   // Glyph stays a stable brand cyan (matching the main dashboard's agent widget); the trailing
   // status glyph below — not the icon — carries running/done/error color, so the agent's identity
   // icon doesn't flicker yellow/green/red as its status changes.
-  const showName = !GENERIC_NAMES.has(name) || !task.description;
+  const showName = !GENERIC_NAMES.has(name) || !text;
   const parts = showName
-    ? [`${CYAN}${gAgent}${RESET} ${BOLD}${name}${RESET}`]
-    : [`${CYAN}${gAgent}${RESET} ${SOFT}${truncate(task.description, 56)}${RESET}`];
-  if (showName && task.description) parts.push(`${SOFT}${truncate(task.description, 40)}${RESET}`);
-  const me = modelEffort(task);
+    ? [`${CYAN}${icon}${RESET} ${BOLD}${name}${RESET}`]
+    : [`${CYAN}${icon}${RESET} ${SOFT}${truncate(text, 56)}${RESET}`];
+  if (showName && text) parts.push(`${SOFT}${truncate(text, 40)}${RESET}`);
+  const me = on("subagent.model") ? modelEffort(task) : "";
   if (me) parts.push(`${DIM}${me}${RESET}`);
-  parts.push(`${st.color}${st.glyph}${RESET}`);
+  const el = on("subagent.elapsed") ? elapsed(task.startTime) : "";
+  parts.push(`${st.color}${st.glyph}${RESET}${el ? ` ${SOFT}${el}${RESET}` : ""}`);
   const tok = Number(task.tokenCount) || 0;
-  if (tok > 0) parts.push(`${SOFT}${formatTokens(tok)} tok${RESET}`);
+  if (tok > 0 && on("subagent.tokens")) parts.push(`${SOFT}${formatTokens(tok)} tok${RESET}`);
   return truncateVisible(parts.join(sep), Math.max(8, cols - 1));
 }
 
