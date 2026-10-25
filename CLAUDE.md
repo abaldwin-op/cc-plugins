@@ -55,6 +55,12 @@ build step.
   `check.js`).
 - `skills/setup/SKILL.md` — `/statusline-dashboard:setup`: stages, then runs `install.js` from the
   data dir (`--print` / `--uninstall` pass through).
+- `skills/configure/SKILL.md` — `/statusline-dashboard:configure`: edits the user config file,
+  `~/.claude/statusline-dashboard.json` (`CLAUDE_STATUSLINE_CONFIG` overrides the path). It lives
+  outside the plugin so both install kinds share it and updates never clobber it. Both scripts
+  read it: row selection/order, `hide` widget ids (gated with `on("row.widget")`), `labels`,
+  `bars`, `pace`, `clock`, `usageApi`, `maxRows`. A new widget gets an id, and the README table
+  and the skill's id list must stay in sync with the `on(...)` calls.
 - `/check.js` (repo root) — the invariant checker (see below).
 
 ### Running / verifying changes
@@ -98,10 +104,13 @@ terminal, not just the aesthetics.
    (ties by `SQUEEZE_ORDER`) one row shorter via `packSection`'s `maxRows` (cut with a trailing
    `…`), then whole sections vanish in `DROP_ORDER`. Tall terminal: wraps beyond the section
    count are allowed (no `…` data loss) up to `WRAP_HEADROOM` extra rows. **Adding a row =
-   adding one entry to `sectionSpecs`** (and to `SQUEEZE_ORDER` + `DROP_ORDER`); never
-   conditionally omit a slot.
+   adding one entry to `sectionSpecs`** (and to `SQUEEZE_ORDER` + `DROP_ORDER` + `ROW_IDS`);
+   never conditionally omit a slot. The user config's row selection is the one exception: it
+   filters `sectionSpecs` up front (a static choice, not a per-render one), and the config file's
+   mtime joins the high-water-mark key so an edit resets the mark. Its `maxRows` can only lower
+   the budget.
 2. **Lines must never exceed the terminal width.** CC counts logical lines; a terminal
-   hard-wrap desyncs its repaint. `packSection` measures with `vlen` (visible width, ANSI- and
+   hard-wrap desyncs its repaint. `packSection` measures with `vlen` (visible width, ANSI-, OSC 8 link- and
    wide-glyph-aware) and degrades per item: widest alt → narrowest alt → wrap to a fresh row →
    truncate the narrow alt with `…` when even that overflows a row on its own (any alt count —
    an unclipped over-wide item is exactly the hard-wrap this guards against). Width comes from

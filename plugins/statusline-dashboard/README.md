@@ -21,7 +21,8 @@ dashboard never pushes Claude Code's own footer off the bottom. Within one windo
 only ratchets up, never down, so Claude Code's repaint never leaves ghost rows behind.
 
 - **Model** — model name (⚡ when fast mode is on), reasoning effort (styled to echo Claude
-  Code's `/effort` menu) with a 💡 lamp when extended thinking is on, and a context-window gauge
+  Code's `/effort` menu; only on models that have an effort setting) with a 💡 lamp when extended
+  thinking is on, and a context-window gauge
   that warns early (yellow ≥50%, red ≥80%) plus a red `200K+` marker once you cross the fixed
   200k long-context pricing line on an extended-context (>200k) model.
 - **Limits** — the `5h` and `7d` rate-limit windows with usage bars, percentages, and reset
@@ -32,20 +33,23 @@ only ratchets up, never down, so Claude Code's repaint never leaves ghost rows b
   (monthly usage-credit spend, `$used/$limit`) appears only once credits actually start being
   consumed. Behind a [Claude apps gateway](https://code.claude.com/docs/en/claude-apps-gateway-spend-limits),
   an `Sp` gauge shows your spend-limit usage (`rate_limits.spend_limit`, Claude Code ≥ 2.1.251) —
-  it keeps counting past 100% once you're over the cap, with the period's reset date.
+  it keeps counting past 100% once you're over the cap, with the period's reset date. From Claude
+  Code 2.1.284 it also shows the dollars (`$used/$limit`) and, when the gateway reports the
+  period (daily / weekly / monthly), a pace balance like the other gauges.
 - **Usage** — total session cost, `$/h` burn rate, throughput (tok/s), API time, and wall-clock.
 - **Turn** — the last call's token makeup: input / output / cache-write / cache-read; then the
   session's prompt-cache health (`prompt_cache`, Claude Code ≥ 2.1.251): hit ratio, `warm` with
   time left on the TTL or `cold` with what the next request will re-cache, and a yellow miss
   count with the likely cause of the last miss (e.g. `tools changed`) when there's room.
 - **Activity** — active slash command, todo progress, last tool call, sub-agents (each running
-  agent with its own task count, plus a green ✔ tally of completed ones), and the session's edit
-  volume (+added / −removed lines).
+  agent with its own task count, plus a green ✔ tally of completed ones), your agent team's
+  teammates when this session leads one (agent teams, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`),
+  and the session's edit volume (+added / −removed lines).
 - **Repo** — *(only inside a git repo)* project name, origin-remote identity (host-branded
   GitHub/GitLab/Bitbucket badge + `owner`, or `owner/name` when the remote name differs from the
   folder), worktree, branch with ahead/behind and staged/modified/untracked/conflict counts, the
-  current branch's open PR — or GitLab merge request, shown as `!N` — colored by review state,
-  and the latest `v*` tag with commits-since.
+  current branch's open PR — or GitLab merge request, shown as `!N` — colored by review state
+  and clickable in terminals that support links, and the latest `v*` tag with commits-since.
 - **Config** — what's actually loaded, each broken down by Claude Code's real config scopes
   **(managed / user / project / local / plugin)**, de-duped by precedence and gated on workspace
   trust: instruction files (CLAUDE.md, plus AGENTS.md wherever Claude Code ≥ 2.1.277 loads it
@@ -141,7 +145,8 @@ The installer points settings at copies of the scripts in the plugin's persisten
 (`~/.claude/plugins/data/…`), not at the plugin itself: a plugin's install path changes with every
 version, while the data directory is stable. A `SessionStart` hook in the plugin keeps those
 copies current, so `/plugin update` flows through on the next session with no re-setup. To remove
-it later, run `/statusline-dashboard:setup --uninstall` (`--print` previews either way).
+it later, run `/statusline-dashboard:setup --uninstall` (`--print` previews either way). To change
+what it shows, run `/statusline-dashboard:configure` (see [Configuration](#configuration)).
 
 ### From a checkout
 
@@ -191,8 +196,10 @@ everything it needs (settings, transcript, project config) from their normal loc
 `subagent-statusline.js` implements Claude Code's
 [`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines) setting —
 the per-subagent row in the agent panel below the prompt. It renders each row as
-`name · description · model effort · ● · NNk tok`, colored by status (running / completed / error)
-and clamped to the row width, matching the main dashboard. Wire it up alongside `statusLine`:
+`name · progress · model effort · ● elapsed · NNk tok`, colored by status (running / idle /
+completed / error / stopped) and clamped to the row width, matching the main dashboard. The
+progress text is the agent's live summary of what it's doing, falling back to its description.
+Agent-team teammates get a team icon instead of the robot. Wire it up alongside `statusLine`:
 
 ```json
 {
@@ -205,29 +212,83 @@ and clamped to the row width, matching the main dashboard. Wire it up alongside 
 
 ## Configuration
 
-A couple of optional environment variables:
+Everything is optional. With no configuration you get the full dashboard described above.
+
+### Choosing what it shows
+
+Create `~/.claude/statusline-dashboard.json`, or let Claude do it: run
+`/statusline-dashboard:configure` and describe what you want (for example *"hide the host row and
+the tok/s widget"*). The file is shared by plugin and checkout installs, and updates never
+overwrite it. Changes show on the next render.
+
+```json
+{
+  "rows": ["model", "limits", "usage", "repo", "info"],
+  "hide": ["host.os", "usage.api", "config.scopes"],
+  "labels": false,
+  "bars": true,
+  "pace": true,
+  "clock": "12h",
+  "usageApi": true,
+  "maxRows": 6
+}
+```
+
+| Key | Default | Effect |
+| --- | --- | --- |
+| `rows` | all rows | Which rows render, and in what order: `model`, `limits`, `usage`, `turn`, `activity`, `repo`, `config`, `exts`, `host`, `info`. |
+| `hide` | `[]` | Row ids or individual widget ids to drop (listed below). |
+| `labels` | `true` | `false` drops the left label column, which frees 9 columns on every row. |
+| `bars` | `true` | `false` renders every gauge as a number only. |
+| `pace` | `true` | `false` drops the `+N%` / `-N%` pace balance from the Limits gauges. |
+| `clock` | `"24h"` | `"12h"` for a 12-hour Host clock. |
+| `usageApi` | `true` | `false` never reads your OAuth token or calls the usage API: no model-scoped weekly gauges and no `Cr` gauge. |
+| `maxRows` | none | Caps the number of rows. It can only lower the built-in limit of a third of the terminal height. |
+
+Widget ids for `hide`:
+
+| Row | Widgets |
+| --- | --- |
+| Model | `model.effort` `model.thinking` `model.context` |
+| Limits | `limits.5h` `limits.7d` `limits.scoped` `limits.spend` `limits.credits` |
+| Usage | `usage.cost` `usage.burn` `usage.speed` `usage.api` `usage.duration` |
+| Turn | `turn.tokens` `turn.cache` |
+| Activity | `activity.command` `activity.todo` `activity.tool` `activity.agents` `activity.team` `activity.lines` |
+| Repo | `repo.remote` `repo.worktree` `repo.branch` `repo.pr` `repo.tag` |
+| Config | `config.instructions` `config.memory` `config.agents` `config.commands` `config.skills` `config.workflows` `config.routines` `config.rules` `config.mcp` `config.connectors` `config.chrome` `config.hooks` `config.plugins` `config.themes` `config.dirs` `config.scopes` |
+| Exts. | `exts.lsp` `exts.monitors` `exts.bin` `exts.channels` |
+| Host | `host.clock` `host.os` `host.user` `host.fleet` |
+| Info. | `info.cwd` `info.style` `info.vim` `info.version` `info.agent` `info.remote` `info.session` |
+| Agent panel | `subagent.label` `subagent.model` `subagent.elapsed` `subagent.tokens` |
+
+Unknown keys and ids are ignored, and a file that isn't valid JSON falls back to the defaults, so a
+typo never blanks the status line.
+
+### Environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `CLAUDE_STATUSLINE_CONFIG` | `~/.claude/statusline-dashboard.json` | Use a different config file. |
 | `CLAUDE_STATUSLINE_TRANSCRIPT_BYTES` | `1048576` (1 MiB) | How many trailing bytes of the transcript to parse per render. |
 | `CLAUDE_STATUSLINE_MANAGED_DIR` | platform default | Override the enterprise/managed config dir (for testing/relocation). |
 | `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | unset | Claude Code's own switch; when `1` the Config row's auto-memory count reads `0`, matching what actually loads. |
 
-It also honors a few `~/.claude/settings.json` keys when present: `effortLevel`, `fastMode`,
-`autoMemoryEnabled` / `autoMemoryDirectory` (any scope), and the `statusLine.padding` /
-`statusLine.refreshInterval` shown above.
+It also honors a few `~/.claude/settings.json` keys when present: `autoMemoryEnabled` /
+`autoMemoryDirectory` (any scope), and the `statusLine.padding` / `statusLine.refreshInterval`
+shown above.
 
-## Customizing
+### Going further
 
 It's a single readable file — the top of `statusline.js` defines every color and Nerd Font
-glyph as a named constant, so swapping an icon or recoloring a widget is a one-line change. The
-extensive inline comments explain *why* each threshold, scope rule, and color was chosen.
+glyph as a named constant, so swapping an icon or recoloring a widget is a one-line change in a
+checkout install. The inline comments explain *why* each threshold, scope rule, and color was
+chosen.
 
 ## Development
 
 Layout: the repo root is the marketplace (`.claude-plugin/marketplace.json`), and
 `plugins/statusline-dashboard/` is the plugin — the two scripts, `install.js`, the
-`SessionStart` staging hook (`hooks/`, `scripts/stage.js`) and the `setup` skill. `check.js` and
+`SessionStart` staging hook (`hooks/`, `scripts/stage.js`) and the `setup` and `configure` skills. `check.js` and
 CI live at the root.
 
 `check.js` is the safety net for the rendering invariants that matter to your terminal (no line

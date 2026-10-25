@@ -1,11 +1,11 @@
 {
   "name": "statusline-dashboard",
   "displayName": "Statusline Dashboard",
-  "version": "1.0.0",
-  "description": "Opinionated multi-row status line for Claude Code: context, cost, rate-limit windows with pace balance, git/PR, sub-agents, and config-scope breakdowns. Zero-dependency Bun scripts with Nerd Font glyphs.",
+  "version": "1.1.0",
+  "description": "Opinionated multi-row status line for Claude Code: context, cost, rate-limit windows with pace balance, git/PR, sub-agents and agent teams, and config-scope breakdowns. Rows and widgets are configurable. Zero-dependency Bun scripts with Nerd Font glyphs.",
   "author": { "name": "Anthony Baldwin", "url": "https://github.com/anthonybaldwin" },
-  "homepage": "https://github.com/anthonybaldwin/claude-statusline",
-  "repository": "https://github.com/anthonybaldwin/claude-statusline",
+  "homepage": "https://github.com/anthonybaldwin/cc-plugins/tree/main/plugins/statusline-dashboard",
+  "repository": "https://github.com/anthonybaldwin/cc-plugins",
   "license": "MIT",
   "keywords": ["statusline", "status-line", "dashboard", "rate-limits", "context-window", "nerd-fonts", "bun"]
 }
