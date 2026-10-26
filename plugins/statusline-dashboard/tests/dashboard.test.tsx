@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
 import { legacyKeys, parseApiUsage, parseChanged, parseGitStatus, parseLastCommit, parseRemote, parseTag } from '../hooks/collect'
-import { DROP_ORDER, ROW_IDS, cells, legendLines, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, type Section } from '../hooks/layout'
+import { DROP_ORDER, ROW_IDS, bar, cells, legendLines, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, type Section } from '../hooks/layout'
 import { editLines, emptyActivity, recordTool } from '../hooks/register'
 import { buildSections, parseConfig } from '../hooks/sections'
 
@@ -185,6 +185,14 @@ test('the overflow strip always fits on one line', () => {
     const out = stripLabels(labels, w)
     expect(2 + out.join(' ').length).toBeLessThanOrEqual(w)
   }
+})
+
+test('gauges are whole cells with no gap before the track', () => {
+  const text = (p: number) => bar(p, undefined).map((r) => r.t).join('')
+  expect(text(0)).toBe('░░░░░░░░░░')
+  expect(text(2)).toBe('█░░░░░░░░░')
+  expect(text(32)).toBe('███░░░░░░░')
+  expect(text(100)).toBe('██████████')
 })
 
 test('pace balance: quota in hand is positive, burning ahead negative', () => {

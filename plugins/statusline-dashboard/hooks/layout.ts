@@ -366,21 +366,17 @@ export function pace(percentUsed: number, resetsAt: string | undefined, windowMs
 }
 
 /**
- * A 10-cell gauge: the used part solid with eighth-block partials, the rest in the light shade the
- * context bar uses for free space. No background colour: a painted track drew as a pale box on
- * any terminal background but near-black, and swallowed a low fill.
+ * A 10-cell gauge: the used part solid, the rest in the light shade the context bar uses for free
+ * space. Whole cells only — an eighth-block partial (▏▎▍…) leaves most of its cell blank, which
+ * reads as a gap between the fill and the track — and at least one cell for any use above 0%. No
+ * background colour: a painted track drew as a pale box on any terminal background but near-black.
  */
 export function bar(pct: number, color: string | undefined, width = 10): Run[] {
   const p = Math.max(0, Math.min(100, pct))
-  const eighths = Math.round((p / 100) * width * 8)
-  const full = Math.floor(eighths / 8)
-  const rem = eighths % 8
-  let fill = '█'.repeat(full)
-  if (rem > 0) fill += String.fromCodePoint(0x2590 - rem) // ▏▎▍▌▋▊▉
-  const track = '░'.repeat(Math.max(0, width - [...fill].length))
+  const full = p > 0 ? Math.max(1, Math.round((p / 100) * width)) : 0
   const runs: Run[] = []
-  if (fill) runs.push({ t: fill, c: color ?? c256(250) })
-  if (track) runs.push({ t: track, d: true })
+  if (full) runs.push({ t: '█'.repeat(full), c: color ?? c256(250) })
+  if (width - full > 0) runs.push({ t: '░'.repeat(width - full), d: true })
   return runs
 }
 

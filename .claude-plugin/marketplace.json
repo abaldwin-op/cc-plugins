@@ -4,7 +4,7 @@
     "name": "Anthony Baldwin",
     "url": "https://github.com/anthonybaldwin"
   },
-  "description": "Anthony Baldwin's Claude Code plugins: a dashboard above the prompt, status-driven terminal tinting, and native desktop notifications.",
+  "description": "Anthony Baldwin's Claude Code plugins: a dashboard above the prompt, styled agent-panel rows, status-driven terminal tinting, and native desktop notifications.",
   "plugins": [
     {
       "name": "statusline-dashboard",
@@ -18,6 +18,19 @@
         "rate-limits",
         "context-window",
         "nerd-fonts"
+      ]
+    },
+    {
+      "name": "agent-panel",
+      "source": "./plugins/agent-panel",
+      "description": "Styles the agent panel's rows for sub-agents and agent-team teammates: name or type, live progress, model and effort, a coloured status glyph, elapsed time and tokens. Nothing written to your settings. Requires Bun.",
+      "category": "productivity",
+      "tags": [
+        "subagent-statusline",
+        "agents",
+        "agent-teams",
+        "nerd-fonts",
+        "bun"
       ]
     },
     {

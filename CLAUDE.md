@@ -99,10 +99,28 @@ register. Verify with `claude plugin validate --strict plugins/statusline-dashbo
 `claude plugin test plugins/statusline-dashboard`; a real look in a terminal is still needed for
 anything visual (the test kit checks the tree, not the paint).
 
+## plugins/agent-panel
+
+The agent panel's rows (`subagentStatusLine`) for sub-agents and agent-team teammates, split out
+of statusline-dashboard 1.x. `agent-panel.js` is a single-file Bun script: JSON on stdin (`columns`,
+`tasks[]`), one `{"id","content"}` line per row out, every row clamped to `columns - 1` cells with
+`vlen` (Nerd Font PUA glyphs count 2). Wiring needs no settings edit: the plugin's root
+`settings.json` sets `subagentStatusLine` (with `agent`, the only keys a plugin's settings take),
+and its command points at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/agent-panel-cc-plugins/agent-panel.js`,
+which `scripts/stage.js` (SessionStart hook; silent, always exit 0) keeps current — the docs
+promise no `${CLAUDE_PLUGIN_ROOT}` substitution in that command, and the root moves per version.
+The path in `settings.json` and the data dir must agree. A user's own `subagentStatusLine` in
+`~/.claude/settings.json` outranks the plugin's. It reads the `subagent.*` ids from
+statusline-dashboard's config file's `hide` list.
+
 ## plugins/session-color
 
 Status-driven terminal background tint. `hooks/hooks.json` maps nine events to one of four state
-words (`working` / `needs` / `done` / `reset`) — keep it in sync with the tables in the README and
+words (`working` / `needs` / `done` / `reset`). The dispatcher shows the LEAD's state: events
+carrying `agent_id` (sub-agents, in-process teammates) paint only `needs`, and their next `working`
+restores the lead's last state (remembered per session in `$TMPDIR/session-color-<session_id>`).
+The macOS/Linux tty walk stops at the nearest `claude` process (no tty there → paint nothing), so a
+background session never tints the pane of the session that launched it — keep it in sync with the tables in the README and
 the `MAPPING` comment in `windows/src/main.rs`. `Notification` is deliberately unwired (it only
 repaints states the specific events already cover). Implementations: `macos/session-color.sh`
 (OSC 11 to the pane's pty, found by walking the process tree to `claude`), `linux/session-color.sh`
