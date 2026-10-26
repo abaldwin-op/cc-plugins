@@ -234,6 +234,11 @@ test('tool calls fold into the activity: todos, tasks, edit lines', () => {
   expect(a.tasks['7']).toEqual({ subject: 'ship it', status: 'completed' })
   a = recordTool(a, 'Edit', { file_path: '/x/y.ts', old_string: 'a', new_string: 'a\nb' })
   expect([a.linesAdded, a.linesRemoved, a.lastTool?.target]).toEqual([1, 0, 'y.ts'])
+  // Agent calls stay out of the tool list (the agent list shows them); MCP names read server:tool.
+  a = recordTool(a, 'Agent', { subagent_type: 'Explore', description: 'look around' })
+  a = recordTool(a, 'mcp__linear__create_issue', {})
+  expect(a.lastTool).toEqual({ name: 'linear:create_issue', target: undefined })
+  expect(a.recentTools?.map((t) => t.name)).not.toContain('Agent')
 })
 
 test('only blocks that run this plugin\'s 1.x scripts count as legacy', () => {

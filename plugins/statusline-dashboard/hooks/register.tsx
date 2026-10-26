@@ -202,10 +202,26 @@ export function toolTarget(name: string, input: Record<string, unknown>): string
       return typeof input.pattern === 'string' ? short(input.pattern, 20) : undefined
     case 'Bash':
       return typeof input.command === 'string' ? short(input.command, 25) : undefined
+    case 'Agent':
+    case 'Task':
+      return typeof input.subagent_type === 'string' ? input.subagent_type : typeof input.description === 'string' ? short(input.description, 25) : undefined
+    case 'Skill':
+      return typeof input.skill === 'string' ? input.skill : undefined
+    case 'WebFetch':
+      return typeof input.url === 'string' ? (input.url.match(/^[a-z]+:\/\/([^/]+)/i)?.[1] ?? short(input.url, 25)) : undefined
+    case 'WebSearch':
+      return typeof input.query === 'string' ? short(input.query, 25) : undefined
+    case 'TaskCreate':
+      return typeof input.subject === 'string' ? short(input.subject, 25) : undefined
+    case 'TaskUpdate':
+      return input.taskId !== undefined ? `#${String(input.taskId)}` : undefined
     default:
       return undefined
   }
 }
+
+/** A tool's display name: an MCP tool's `mcp__server__tool` reads `server:tool`. */
+export const toolName = (name: string) => name.match(/^mcp__(.+?)__(.+)$/)?.slice(1).join(':') ?? name
 
 /** Lines an edit adds and removes: the old and new text with their common head and tail lines trimmed. */
 export function editLines(oldText: string, newText: string): { added: number; removed: number } {
@@ -229,8 +245,9 @@ export function recordTool(a: Activity, name: string, input: Record<string, unkn
   if (resultText === undefined) {
     next.toolCalls += 1
     next.running += 1
-    next.lastTool = { name, target: toolTarget(name, input) }
-    next.recentTools = [...(next.recentTools ?? []), { name, target: toolTarget(name, input) }].slice(-5)
+    next.lastTool = { name: toolName(name), target: toolTarget(name, input) }
+    // Agent calls stay out: the agent list beside it shows each one, with its task and status.
+    if (name !== 'Agent' && name !== 'Task') next.recentTools = [...(next.recentTools ?? []), { name: toolName(name), target: toolTarget(name, input) }].slice(-8)
     if (name === 'TodoWrite' && Array.isArray(input.todos)) {
       const todos = input.todos as Array<{ status?: string; content?: string }>
       const current = todos.find((t) => normStatus(t.status) === 'in_progress') ?? todos.find((t) => normStatus(t.status) === 'pending')
@@ -257,7 +274,7 @@ export function recordTool(a: Activity, name: string, input: Record<string, unkn
   const tools = next.recentTools ?? []
   for (let i = tools.length - 1; i >= 0; i--) {
     const t = tools[i]
-    if (t && t.name === name && t.ok === undefined) {
+    if (t && t.name === toolName(name) && t.ok === undefined) {
       tools[i] = { ...t, ok: !isError }
       break
     }

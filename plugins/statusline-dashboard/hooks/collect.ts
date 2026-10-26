@@ -410,9 +410,9 @@ export async function collectAgents($: $) {
       completed: subs.filter((a) => a.status === 'completed').length,
       failed: subs.filter((a) => a.status === 'failed' || a.status === 'killed').length,
       teammates: all.filter((a) => a.teammateId).map((a) => a.name ?? a.teammateId?.split('@')[0] ?? '?'),
-      list: [...subs]
-        .sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running'))
-        .slice(0, 5)
+      // In start order (the roster's), the last five, plus any older one still running.
+      list: subs
+        .filter((a, i) => i >= subs.length - 5 || a.status === 'running' || a.status === 'pending' || a.status === 'waiting')
         .map((a) => ({ type: a.type, description: a.description, status: a.status })),
     }
   } catch {

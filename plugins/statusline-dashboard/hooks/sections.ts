@@ -255,12 +255,23 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
     }
   }
   if (a.recentTools?.length && on('activity.tool')) {
-    const calls = a.recentTools.map((t): Run[] => [
-      v(t.target ? `${t.name}(${truncate(t.target, 24)})` : t.name),
-      t.ok === undefined ? v(' …', WARN) : t.ok ? v(` ${OK}`, GOOD) : v(` ${NO}`, BAD),
+    // Repeats of the same call collapse into one with a count: `Read(a.ts) ✔︎ ×3`.
+    const runs: Array<{ label: string; ok?: boolean; n: number }> = []
+    for (const t of a.recentTools) {
+      const label = t.target ? `${t.name}(${truncate(t.target, 24)})` : t.name
+      const last = runs[runs.length - 1]
+      if (last && last.label === label && last.ok === t.ok) last.n++
+      else runs.push({ label, ok: t.ok, n: 1 })
+    }
+    const calls = runs.slice(-5).map((c): Run[] => [
+      v(c.label),
+      c.ok === undefined ? v(' …', WARN) : c.ok ? v(` ${OK}`, GOOD) : v(` ${NO}`, BAD),
+      ...(c.n > 1 ? [d(` ×${c.n}`)] : []),
     ])
     lines.push(calls.flatMap((c, i) => (i ? [d('  '), ...c] : c)))
   }
+  // The session's sub-agents in the order they started, newest last: what each was asked to do
+  // and how it ended.
   if (a.agents.list?.length && on('activity.agents')) {
     for (const ag of a.agents.list) {
       const col = ag.status === 'completed' ? GOOD : ag.status === 'failed' || ag.status === 'killed' ? BAD : CYAN
