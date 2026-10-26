@@ -1,6 +1,6 @@
 {
   "subagentStatusLine": {
     "type": "command",
-    "command": "bun -e \"import(require('url').pathToFileURL(require('path').join(process.env.CLAUDE_CONFIG_DIR || require('os').homedir() + '/.claude', 'plugins', 'data', 'agent-panel-cc-plugins', 'agent-panel.js')).href)\""
+    "command": "bun -e \"const p=require('path'),c=process.env.CLAUDE_CONFIG_DIR||p.join(require('os').homedir(),'.claude'),r=JSON.parse(require('fs').readFileSync(p.join(c,'plugins','installed_plugins.json'),'utf8')).plugins['agent-panel@cc-plugins'];import(require('url').pathToFileURL(p.join(r[r.length-1].installPath,'agent-panel.js')).href)\""
   }
 }

@@ -45,7 +45,7 @@ cc-plugins/
 ├─ .claude-plugin/marketplace.json   # the marketplace: one entry per plugin below
 ├─ plugins/
 │  ├─ statusline-dashboard/          # a mod: hooks/register.tsx (+ layout, sections, collect), types/, tests/
-│  ├─ agent-panel/                   # agent-panel.js (subagentStatusLine), settings.json, SessionStart staging hook
+│  ├─ agent-panel/                   # agent-panel.js + settings.json (subagentStatusLine)
 │  ├─ session-color/                 # hooks.json + sh dispatcher; macos/ linux/ (shell), windows/ (Rust)
 │  └─ notifications/                 # hooks.json + sh dispatcher; windows/ (Rust), macos/ (Swift)
 └─ .github/workflows/check.yml       # `claude plugin validate` + `test`, sh -n, cargo + swift builds, .ps1 parse

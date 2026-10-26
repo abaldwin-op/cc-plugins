@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // agent-panel — implements Claude Code's `subagentStatusLine` setting: a custom row body for each
 // sub-agent AND agent-team teammate in the agent panel below the prompt, replacing the default
-// `name · description · token count` with: icon (robot for a sub-agent, team for a teammate), name
+// `name · description · token count` with: icon (robot for a sub-agent, person for a teammate), name
 // or type, live progress, model + effort, a status glyph coloured by state, elapsed time, tokens.
 //
 // Input (one JSON object on stdin): the base hook fields plus `columns` (usable row width) and a
@@ -17,8 +17,9 @@
 // Docs: https://code.claude.com/docs/en/statusline#subagent-status-lines
 //
 // Wiring: the plugin's own settings.json sets `subagentStatusLine` (one of the two keys a plugin's
-// settings may set), pointing at the copy hooks/hooks.json's SessionStart hook keeps in the
-// plugin's data dir — so nothing is written to the user's settings, and an uninstall removes both.
+// settings may set), so nothing is written to the user's settings and an uninstall removes it. The
+// install path moves with every version, so the command (a `bun -e` one-liner, shell-agnostic)
+// looks this file up through Claude Code's plugins/installed_plugins.json on each run.
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -41,7 +42,7 @@ const gErr = cp(0x2718) + cp(0xfe0e); // ✘︎
 const gRun = cp(0x25cf); // ● running
 const gPend = cp(0x25cb); // ○ pending
 const gIdle = cp(0x25cc); // ◌ idle (a teammate waiting for its next message)
-const gTeam = cp(0xf0849); // nf-md-account_group — agent-team teammate (matches the dashboard's team widget)
+const gMate = cp(0xf0004); // nf-md-account — a person: an agent-team teammate (MD, since FA's user glyph is tofu in the Windows font)
 
 // Shares statusline-dashboard's user config file (~/.claude/statusline-dashboard.json, or
 // CLAUDE_STATUSLINE_CONFIG); this script reads only its `hide` list, for the "subagent.*" ids.
@@ -190,8 +191,8 @@ function renderRow(task, cols) {
   // A generic CC name ("local_agent") yields to the subagent type when CC sends one ("Explore").
   const name = String((!GENERIC_NAMES.has(task.name) && task.name) || task.agentType || task.name || task.type || "agent");
   const st = statusStyle(normalizeStatus(task.status));
-  // Teammates get the team glyph, so a mixed panel reads "who's on the team" vs "who's a helper".
-  const icon = task.type === "in_process_teammate" ? gTeam : gAgent;
+  // Teammates get a person, sub-agents a robot, so a mixed panel reads "who's on the team" vs "who's a helper".
+  const icon = task.type === "in_process_teammate" ? gMate : gAgent;
   // `label` is the LIVE progress summary (what the agent is doing now), else the description.
   const text = (on("subagent.label") && typeof task.label === "string" && task.label.trim()) || task.description;
   const sep = ` ${DIM}·${RESET} `;
