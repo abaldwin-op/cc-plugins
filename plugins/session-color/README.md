@@ -32,9 +32,23 @@ The tint is a single [OSC 11](https://invisible-island.net/xterm/ctlseqs/ctlseqs
 
 `hooks/session-color.sh` is a tiny POSIX dispatcher (one `hooks.json` serves every OS) that hands the state word to the platform implementation:
 
-- **macOS** (`macos/session-color.sh`) — walks up the process tree to the Claude process and writes the escape to *its* real tty device (the pane's pty, e.g. `/dev/ttys003`). Per-pane, so concurrent sessions never clobber each other. Fullscreen-safe: in `/tui fullscreen` Claude draws on the alternate screen but inherits the background rather than painting opaque cells, so the tint shows through (confirmed in [Ghostty](https://ghostty.org/)).
+- **macOS** (`macos/session-color.sh`) — walks up the process tree to the *nearest* Claude process and writes the escape to *its* real tty device (the pane's pty, e.g. `/dev/ttys003`). Per-pane, so concurrent sessions never clobber each other. Fullscreen-safe: in `/tui fullscreen` Claude draws on the alternate screen but inherits the background rather than painting opaque cells, so the tint shows through (confirmed in [Ghostty](https://ghostty.org/)).
 - **Linux** (`linux/session-color.sh`) — same tty walk, but **tmux-aware**: inside tmux raw OSC 11 escapes get intercepted and don't reliably reach the pane, so it maps the resolved pty to its tmux pane id and colors it natively with `tmux select-pane -P bg=…`. Outside tmux it falls back to OSC 11 on the pty.
 - **Windows** (`windows/`, Rust) — there is no `/dev/tty`. The exe walks up the process tree to the `claude` process, `AttachConsole()`s to **its** console — the pane's pseudoconsole ([ConPTY](https://devblogs.microsoft.com/commandline/windows-command-line-introducing-the-windows-pseudo-console-conpty/)) — and writes the escape to `CONOUT$`. ConPTY relays it to the terminal; per-pane for free.
+
+### Agents, agent teams and background sessions
+
+- **Sub-agents and in-process teammates** run inside the lead's Claude process, so their tool calls
+  fire the lead's hooks. The pane shows the **lead's** state. An agent still calling tools after the
+  lead's turn ended doesn't turn a green "your move" pane amber. An agent that needs a permission
+  or an answer still turns it red, and once it carries on, the pane goes back to the lead's state.
+  The dispatcher tells them apart by the hook input's `agent_id` and remembers the lead's last state
+  per session in a small file in `$TMPDIR`, which `SessionEnd` removes.
+- **Split-pane teammates** (tmux or iTerm2 teammate mode) are Claude processes of their own, each in
+  its own pane. Each tints its own pane.
+- **Background sessions** (`claude agents`, detached agents) have no terminal. The tree walk stops
+  at the nearest Claude process. If that process has no terminal, nothing is painted. In 1.0.1 the
+  walk climbed past it and could tint the pane of the session that started it.
 
 ### Windows setup
 
