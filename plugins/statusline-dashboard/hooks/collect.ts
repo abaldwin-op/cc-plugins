@@ -181,6 +181,24 @@ export function parseGitStatus(out: string) {
   return { branch, ahead, behind, staged, modified, untracked, conflicts }
 }
 
+/** The changed paths in porcelain v2 output, first few kept: `M.` staged, `.M` modified, `??` untracked, `UU` conflict. */
+export function parseChanged(out: string, keep = 5): { files: Array<{ xy: string; path: string }>; changedTotal: number } {
+  const files: Array<{ xy: string; path: string }> = []
+  for (const line of out.split('\n')) {
+    const f = line.split(' ')
+    if (line[0] === '1' && f.length >= 9) files.push({ xy: f[1] ?? '..', path: f.slice(8).join(' ') })
+    else if (line[0] === '2' && f.length >= 10) files.push({ xy: f[1] ?? '..', path: f.slice(9).join(' ').split('\t')[0] ?? '' })
+    else if (line[0] === 'u' && f.length >= 11) files.push({ xy: f[1] ?? 'UU', path: f.slice(10).join(' ') })
+    else if (line.startsWith('? ')) files.push({ xy: '??', path: line.slice(2) })
+  }
+  return { files: files.slice(0, keep), changedTotal: files.length }
+}
+
+export function parseLastCommit(out: string | null) {
+  const [sha, ct, ...subject] = String(out ?? '').trim().split('\t')
+  return sha && ct ? { sha, at: Number(ct) * 1000, subject: subject.join('\t') } : undefined
+}
+
 // `--long` always emits "<tag>-<count>-g<sha>", even on the tag; tag names may contain dashes
 // (v1.2-rc1), so anchor the split on the trailing "-<N>-g<hex>".
 export function parseTag(out: string | null) {
@@ -207,11 +225,12 @@ const PR_TTL_MS = 5 * 60e3
  */
 export async function collectRepo($: $, cwd: string, prev: Repo | null, withPr: boolean, now: number): Promise<Repo | null> {
   const git = (...args: string[]) => run($, ['git', '--no-optional-locks', ...args], cwd)
-  const [st, rp, desc, origin] = await Promise.all([
+  const [st, rp, desc, origin, log] = await Promise.all([
     git('status', '--porcelain=v2', '--branch'),
     git('rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'),
     git('describe', '--tags', '--long', '--match', 'v*', 'HEAD'),
     git('remote', 'get-url', 'origin'),
+    git('log', '-1', '--format=%h%x09%ct%x09%s'),
   ])
   if (st === null) return null
   const s = parseGitStatus(st)
@@ -227,6 +246,8 @@ export async function collectRepo($: $, cwd: string, prev: Repo | null, withPr: 
     worktree: isWorktree ? basename(top) : undefined,
     remote: parseRemote(origin),
     tag: parseTag(desc),
+    ...parseChanged(st),
+    lastCommit: parseLastCommit(log),
   }
   if (withPr && repo.remote?.host.includes('github')) {
     const fresh = prev?.prBranch === s.branch && prev.prCheckedAt !== undefined && now - prev.prCheckedAt < PR_TTL_MS
@@ -389,6 +410,10 @@ export async function collectAgents($: $) {
       completed: subs.filter((a) => a.status === 'completed').length,
       failed: subs.filter((a) => a.status === 'failed' || a.status === 'killed').length,
       teammates: all.filter((a) => a.teammateId).map((a) => a.name ?? a.teammateId?.split('@')[0] ?? '?'),
+      list: [...subs]
+        .sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running'))
+        .slice(0, 5)
+        .map((a) => ({ type: a.type, description: a.description, status: a.status })),
     }
   } catch {
     return { running: 0, completed: 0, failed: 0, teammates: [] }

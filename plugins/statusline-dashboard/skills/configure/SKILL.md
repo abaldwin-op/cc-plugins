@@ -44,10 +44,10 @@ The dashboard re-reads it every minute and at each session start; no restart.
 - `limits.5h`, `limits.7d`, `limits.scoped` (model-scoped weekly, e.g. `7dF`), `limits.spend`
   (gateway `Sp`), `limits.credits` (`Cr`)
 - `usage.cost`, `usage.burn` ($/h), `usage.speed` (tok/s), `usage.api`, `usage.duration`
-- `turn.tokens`, `turn.cache` (prompt-cache health)
+- `turn.tokens`, `turn.cache` (prompt-cache health), `turn.history` (the open row's last turns)
 - `activity.command`, `activity.todo`, `activity.tool`, `activity.agents`, `activity.team`,
   `activity.lines`
-- `repo.remote`, `repo.worktree`, `repo.branch`, `repo.pr`, `repo.tag`
+- `repo.remote`, `repo.worktree`, `repo.branch`, `repo.pr`, `repo.tag`, `repo.files` (the open row's last commit and changed files)
 - `config.instructions`, `config.memory`, `config.agents`, `config.commands`, `config.skills`,
   `config.workflows`, `config.routines`, `config.rules`, `config.mcp`, `config.connectors`,
   `config.chrome`, `config.hooks`, `config.plugins`, `config.themes`, `config.dirs`, and

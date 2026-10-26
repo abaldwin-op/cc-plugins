@@ -10,11 +10,14 @@ nothing to set up, nothing written to your settings. Install it and it draws. Un
 it's gone.
 
 ```
-▸ Model    󰚩 Opus 4.7 |  xhigh 󰛨 |  ████       40% 80K/200K
-▸ Limits   󰊚 5h ████▎      42% 15:00 +18% | 7d █▎         13% Tue 09:00 +16%
-▸ Usage     $1.50 |  ~$1.50/h |  44 tok/s |  API 12m |  1h
+▸ Model    󰚩 Opus 4.7 |  xhigh 󰛨 |  ████░░░░░░ 40% 80K/200K
+  Limits   󰊚 5h ████▎░░░░░ 42% 15:00 +18% | 7d █▎░░░░░░░░ 13% Tue 09:00 +16%
+  Usage     $1.50 |  ~$1.50/h |  44 tok/s |  API 12m |  1h
 ▾ Repo      cc-plugins | 󰊤 anthonybaldwin |  main ↑2 +1 ~3 ?1 |  #12 ● |  v1.2.0+3
-▸ Info.     ~/src/cc-plugins |  v2.1.310 |  abcd1234
+           a1b2c3d Fix the pace sign  12m ago
+           ~ plugins/statusline-dashboard/hooks/layout.ts
+           ? notes.md
+  Info.     ~/src/cc-plugins |  v2.1.310 |  abcd1234
 + Turn Activity Config Exts. Host
 ```
 
@@ -34,7 +37,7 @@ view. Run `/plugin uninstall context-bar@cc-plugins`.
 
 | | |
 | --- | --- |
-| Click a row label (fullscreen), or `ctrl+x tab` then Tab and Enter | Open or close that row |
+| Click a row's `▸`/`▾` label (fullscreen), or `ctrl+x tab` then Tab and Enter | Open or close that row. Only rows with more to show have the arrow; a row without one is already whole. |
 | `/dash` | Show or hide the whole dashboard. Your choice is remembered across sessions. |
 | `/dash <row>` | Open or close one row (`/dash config`) |
 | `/dash open all` · `/dash close all` | Open or close every row |
@@ -49,9 +52,14 @@ it's up.
 - **Closed rows** are one line each. Items take their compact form (no bars, no scope
   parentheses) and are cut with `…` when even that won't fit.
 - **Open rows** show everything. Items wrap to aligned continuation lines, gauges keep their
-  bars, and Config keeps its `(m/u/p/l/x)` breakdowns. The Model row adds the context window
-  broken down by category, as `/context` shows it: a stacked bar, one color per category, and a
-  legend.
+  bars, and Config keeps its `(m/u/p/l/x)` breakdowns. Some rows add what a single line has no
+  room for:
+  - **Model**: the context window broken down by category, as `/context` shows it — a stacked
+    bar, one colour per category, and a legend.
+  - **Turn**: the last five turns — duration, output, input and how much of it came from the cache.
+  - **Activity**: the todo list around the current item, the last five tool calls (✔ answered,
+    ✘ failed, … running), and the session's sub-agents with their task descriptions.
+  - **Repo**: the last commit and the first changed files.
 - **Height budget.** In fullscreen the dashboard takes what the bottom slot has left. On the main
   screen it takes at most a third of the terminal, so the conversation keeps its room. Over
   budget, in this order:
@@ -178,9 +186,9 @@ Widget ids for `hide`:
 | Model | `model.effort` `model.thinking` `model.context` |
 | Limits | `limits.5h` `limits.7d` `limits.scoped` `limits.spend` `limits.credits` |
 | Usage | `usage.cost` `usage.burn` `usage.speed` `usage.api` `usage.duration` |
-| Turn | `turn.tokens` `turn.cache` |
+| Turn | `turn.tokens` `turn.cache` `turn.history` |
 | Activity | `activity.command` `activity.todo` `activity.tool` `activity.agents` `activity.team` `activity.lines` |
-| Repo | `repo.remote` `repo.worktree` `repo.branch` `repo.pr` `repo.tag` |
+| Repo | `repo.remote` `repo.worktree` `repo.branch` `repo.pr` `repo.tag` `repo.files` |
 | Config | `config.instructions` `config.memory` `config.agents` `config.commands` `config.skills` `config.workflows` `config.routines` `config.rules` `config.mcp` `config.connectors` `config.chrome` `config.hooks` `config.plugins` `config.themes` `config.dirs` `config.scopes` |
 | Exts. | `exts.lsp` `exts.monitors` `exts.bin` `exts.channels` |
 | Host | `host.clock` `host.os` `host.user` `host.fleet` |

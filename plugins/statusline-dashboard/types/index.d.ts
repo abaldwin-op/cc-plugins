@@ -73,6 +73,10 @@ export type Repo = {
   /** `$.clock.now()` of the last `gh` lookup, so it runs at most every few minutes. */
   prCheckedAt?: number
   prBranch?: string
+  /** For the open view: the first changed paths with their two-letter status, and the last commit. */
+  files?: Array<{ xy: string; path: string }>
+  changedTotal?: number
+  lastCommit?: { sha: string; subject: string; at: number }
 }
 
 export type Host = {
@@ -143,7 +147,20 @@ export type Activity = {
   /** Session-long prompt-cache counts, for the hit ratio. */
   cacheRead: number
   inputTotal: number
-  agents: { running: number; completed: number; failed: number; teammates: string[] }
+  agents: {
+    running: number
+    completed: number
+    failed: number
+    teammates: string[]
+    /** For the open view: the session's sub-agents, running ones first. */
+    list?: Array<{ type: string; description: string; status: string }>
+  }
+  /** For the open view: the last few tool calls (newest last); `ok` once answered. */
+  recentTools?: Array<{ name: string; target?: string; ok?: boolean }>
+  /** For the open view: the TodoWrite list as last written. */
+  todoItems?: Task[]
+  /** For the open view: the last few main-loop turns (newest last). */
+  turns?: Array<{ ms: number; output: number; input: number; cacheRead: number }>
 }
 
 /** The person's view of the band: shown or not, and which rows are open (oldest first). */

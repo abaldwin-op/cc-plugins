@@ -1,8 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-import { legacyKeys, parseApiUsage, parseGitStatus, parseRemote, parseTag } from '../hooks/collect'
-import { DROP_ORDER, ROW_IDS, cells, contextDetail, pace, packSection, plan, runsWidth, stack, stripLabels, type Section } from '../hooks/layout'
+import { legacyKeys, parseApiUsage, parseChanged, parseGitStatus, parseLastCommit, parseRemote, parseTag } from '../hooks/collect'
+import { DROP_ORDER, ROW_IDS, cells, legendLines, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, type Section } from '../hooks/layout'
 import { editLines, emptyActivity, recordTool } from '../hooks/register'
 import { buildSections, parseConfig } from '../hooks/sections'
 
@@ -121,9 +121,10 @@ test('the context stack fills the width exactly, skips deferred rows, and keeps 
     expect(bar.every((s) => s.cells >= 1)).toBe(true)
   }
   expect(stack(segs, 0)).toEqual([])
-  const detail = contextDetail(segs, 200000, 60)
-  expect(runsWidth(detail[0] ?? [])).toBe(60)
-  for (const l of detail) expect(runsWidth(l)).toBeLessThanOrEqual(60)
+  expect(runsWidth(stackRuns(segs, 60))).toBe(60)
+  const legend = legendLines(segs, 200000, 40)
+  expect(legend.length).toBeLessThanOrEqual(2)
+  for (const l of legend) expect(runsWidth(l)).toBeLessThanOrEqual(40)
 })
 
 test('a packed row never exceeds the width, whatever the width', () => {
@@ -167,6 +168,15 @@ test('the plan keeps to the budget: folds the oldest open row, then sends rows t
   expect(roomy.rows.reduce((n, r) => n + r.lines.length, 0) + 1).toBeLessThanOrEqual(6)
 })
 
+test('a row gets a toggle only when opening it shows more', () => {
+  const short: Section = { id: 'usage', label: 'Usage', items: [{ wide: [{ t: '$1' }], narrow: [{ t: '$1' }] }] }
+  const barred: Section = { id: 'limits', label: 'Limits', items: [{ wide: [{ t: '5h ██░░ 4%' }], narrow: [{ t: '5h 4%' }] }, { wide: [{ t: '7d ██░░ 9%' }], narrow: [{ t: '7d 9%' }] }] }
+  const deep: Section = { ...short, id: 'turn', detail: [[{ t: 'last 3s' }]] }
+  // Eight cells: the two gauges don't fit one line even compact, so the open row wraps.
+  const p = plan([short, barred, deep], [], 12, 11 + 8, 11)
+  expect(p.rows.map((r) => [r.id, r.canToggle])).toEqual([['usage', false], ['limits', true], ['turn', true]])
+})
+
 test('the overflow strip always fits on one line', () => {
   const labels = ['Usage', 'Turn', 'Activity', 'Repo', 'Config', 'Exts.', 'Host', 'Info.']
   expect(stripLabels(labels, 80)).toEqual(labels)
@@ -195,6 +205,9 @@ test('git, remote, tag and usage-API parsing', () => {
   expect(parseRemote('https://gitlab.com/group/sub/repo')).toEqual({ host: 'gitlab.com', owner: 'group/sub', name: 'repo' })
   expect(parseRemote('ssh://git@host:2222/o/r.git')).toEqual({ host: 'host', owner: 'o', name: 'r' })
   expect(parseTag('v1.2-rc1-4-gdeadbee')).toEqual({ tag: 'v1.2-rc1', count: 4 })
+  const changed = parseChanged('# branch.head main\n1 .M N... 100644 100644 100644 a b src/my file.ts\n2 R. N... 100644 100644 100644 a b R100 new.ts\told.ts\n? x.txt\n', 2)
+  expect(changed).toEqual({ files: [{ xy: '.M', path: 'src/my file.ts' }, { xy: 'R.', path: 'new.ts' }], changedTotal: 3 })
+  expect(parseLastCommit('abc1234\t1700000000\tFix: a\tb')).toEqual({ sha: 'abc1234', at: 1700000000000, subject: 'Fix: a\tb' })
   const api = parseApiUsage({ limits: [{ kind: 'weekly_scoped', percent: 15, scope: { model: { display_name: 'Fable' } } }, { kind: 'session', percent: 1 }], spend: { enabled: true, used: { amount_minor: 1250, exponent: 2 }, limit: { amount_minor: 5000, exponent: 2 } } }, 7)
   expect(api.scoped).toEqual([{ label: '7dF', percent: 15, resetsAt: undefined }])
   expect(api.credits).toEqual({ used: 12.5, limit: 50, percent: 25 })
