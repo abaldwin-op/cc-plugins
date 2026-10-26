@@ -11,8 +11,10 @@
 #
 # WHY THE DATA DIR: the plugin root is a per-version cache path that moves on every update, and the
 # binaries are referenced from outside the plugin too (Windows protocol handlers in the registry,
-# the macOS .app bundle identity). The data dir is stable across updates. The binaries find their
-# config.json by walking up from their own location, so config lives in the data dir as well.
+# the macOS .app bundle identity). The data dir is stable across updates — but `claude plugin
+# uninstall` deletes it, so it holds only rebuildable artifacts. The user's config.json, icons/ and
+# webhook templates live in ~/.claude/notifications/ ($CLAUDE_CONFIG_DIR/notifications), which the
+# binaries check first.
 #
 # `exec` keeps the process tree intact (the implementations walk up to `claude` / Windows Terminal
 # for tty, pane and UI-Automation targeting) and hands the hook's stdin JSON straight through.

@@ -8,6 +8,12 @@
 # the root is a per-version cache path that moves on every plugin update, the data dir is stable
 # across updates. This script never touches ~/.claude/settings.json — the hooks come from the
 # plugin's hooks.json, so there is nothing to register (and `/plugin uninstall` removes them).
+#
+# -Uninstall resets the current pane's tint THROUGH the exe (before deleting it): this script runs
+# under Claude's Bash tool, whose stdout Claude captures, so an escape written here would never
+# reach the terminal — the exe's AttachConsole to Claude's ConPTY is the only way through. Then it
+# removes the exe and the build dir. Nothing else exists outside the data dir (no registry, no
+# temp files, settings.json untouched).
 
 param(
     [Parameter(Mandatory = $true)][string]$Data,
@@ -19,11 +25,15 @@ $srcDir = $PSScriptRoot                      # <plugin root>/windows
 $exe = Join-Path $Data "session-color.exe"
 
 if ($Uninstall) {
-    if (Test-Path $exe) { Remove-Item $exe -Force; Write-Host "Removed $exe" }
-    else { Write-Host "Nothing staged at $exe" }
-    # Reset the background of the current terminal, if any.
-    Write-Host -NoNewline "`e]111`a"
+    if (Test-Path $exe) {
+        # GUI-subsystem exe: `&` wouldn't wait for it, and it must finish before we delete it.
+        try { Start-Process -FilePath $exe -ArgumentList "reset" -Wait -WindowStyle Hidden } catch {}
+        Remove-Item $exe -Force; Write-Host "Reset this pane's tint; removed $exe"
+    } else { Write-Host "Nothing staged at $exe" }
+    $build = Join-Path $Data "build"
+    if (Test-Path $build) { Remove-Item $build -Recurse -Force; Write-Host "Removed $build" }
     Write-Host "Done. Run /plugin uninstall session-color@cc-plugins to remove the hooks themselves."
+    Write-Host "Other panes still tinted (other running sessions) reset when those sessions end, or by restarting them."
     exit 0
 }
 

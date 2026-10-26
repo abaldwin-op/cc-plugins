@@ -12,7 +12,7 @@ When Claude finishes or needs input, you get a notification showing:
 - **Project directory** and **elapsed time** (e.g., "Task completed (12s)")
 - Clicking it (macOS) or the **Focus Terminal** button (Windows) focuses the originating **window/tab/pane**:
   - Windows Terminal: UI Automation switches to the correct tab (preserves snap/maximize layout)
-  - Ghostty: 3-pass matching (terminal+tab+window ID → CWD+name → prefix CWD)
+  - Ghostty: terminal+tab+window ID → CWD (exact, parent or child dir)
   - iTerm2: session ID → CWD+name → prefix CWD · WezTerm: pane ID via CLI · Terminal.app: tty → process name
 - **Open in Editor** button — opens the project directory in your configured editor
 - Notifications replace by session (no stacking)
@@ -45,7 +45,7 @@ Restart Claude Code after setup.
 
 ## Configuration
 
-Setup seeds `config.json` (from `config.json.example`) in the data directory, alongside the webhook templates; icons go in `icons/` there. Paths in the config are relative to that directory. Edit and re-run `/notifications:setup` if you change `title` (it names the macOS bundle and the Windows AUMID display name).
+Setup seeds `config.json` (from `config.json.example`) in **`~/.claude/notifications/`** (`%USERPROFILE%\.claude\notifications\` on Windows; `$CLAUDE_CONFIG_DIR/notifications/` if you set `CLAUDE_CONFIG_DIR`), alongside the webhook templates; icons go in `icons/` there. Relative paths in the config resolve against that directory. It deliberately lives outside the plugin's data directory, which `/plugin uninstall` deletes — your config and icons survive updates and uninstalls. (Older versions kept them in the data directory; re-running setup moves them over.) Edit and re-run `/notifications:setup` if you change `title` (it names the macOS bundle and the Windows AUMID display name).
 
 ```json
 {
@@ -97,7 +97,7 @@ Sends a JSON POST when you're AFK (screen locked or idle for `idle_minutes`).
 | `webhook.enabled` | Set to `false` to disable without removing config |
 | `webhook.url` | Webhook endpoint (leave empty to disable) |
 | `webhook.idle_minutes` | Minutes of inactivity before sending (default: 15, `0` = always send) |
-| `webhook.payload` | Path to a JSON template file (relative to the data directory) |
+| `webhook.payload` | Path to a JSON template file (relative to the config directory) |
 
 Copy a service template (`webhook.discord.json.example`, `webhook.slack.json.example`, `webhook.ntfy.json.example`, `webhook.gotify.json.example`) to the name in `payload` and customize. Template variables: `{{title}}`, `{{message}}`, `{{elapsed}}`, `{{project}}`, `{{event}}`, `{{notification_type}}`.
 
@@ -116,12 +116,20 @@ Copy a service template (`webhook.discord.json.example`, `webhook.slack.json.exa
 
 ## Uninstall
 
+Claude Code runs no hook when a plugin is uninstalled, so run setup's uninstall **first**:
+
 ```
-/notifications:setup --uninstall      # Windows: unregisters the protocol handlers + AUMID; both: unstages the binary
+/notifications:setup --uninstall
 /plugin uninstall notifications@cc-plugins
 ```
 
-Plugin uninstall removes the hooks and the data directory (config and icons included — back them up first if you want them).
+`--uninstall` removes everything setup created outside your config directory:
+
+- **Both**: the staged binary / `.app` and its build directory, the per-session temp files.
+- **Windows**: the `claude-focus://` / `claude-editor://` protocol handlers (HKCU), the AUMID (HKLM — UAC prompt — plus the HKCU fallback), Windows' per-app notification settings for it, and its toasts in Action Center. Skip this step and those registry entries are orphaned, pointing at a deleted exe.
+- **macOS**: the bundle's LaunchServices registration and the `~/Library` caches/preferences macOS keeps under its bundle id. macOS also lists the app under System Settings → Notifications; there's no supported way to remove that entry from a script.
+
+Plugin uninstall then removes the hooks and the data directory. **`~/.claude/notifications/` (config, icons, webhook templates) is kept on purpose** — delete it yourself if you don't want it.
 
 ## Files
 
@@ -132,6 +140,6 @@ Plugin uninstall removes the hooks and the data directory (config and icons incl
 | `windows/setup.ps1` | Build, stage, register (what `/notifications:setup` runs) |
 | `macos/Sources/main.swift`, `macos/Package.swift`, `macos/Info.plist` | Swift source + bundle metadata |
 | `macos/setup.sh` | Build, bundle, sign, stage |
-| `*/config.json.example`, `*/webhook.*.json.example` | Config + webhook templates (copied into the data dir by setup) |
+| `*/config.json.example`, `*/webhook.*.json.example` | Config + webhook templates (copied into `~/.claude/notifications/` by setup) |
 
 Both binaries still have `install` / `uninstall` subcommands that merge hooks into `~/.claude/settings.json` directly; they're for running from a plain checkout without the plugin system and aren't used by the plugin.
