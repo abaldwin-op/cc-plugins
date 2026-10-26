@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 
 import { legacyKeys, parseApiUsage, parseChanged, parseGitStatus, parseLastCommit, parseRemote, parseTag } from '../hooks/collect'
 import { DROP_ORDER, ROW_IDS, bar, cells, legendLines, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, type Section } from '../hooks/layout'
-import { editLines, emptyActivity, recordTool } from '../hooks/register'
+import { editLines, emptyActivity, mergeAgents, recordTool } from '../hooks/register'
 import { buildSections, parseConfig } from '../hooks/sections'
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────────────
@@ -239,6 +239,23 @@ test('tool calls fold into the activity: todos, tasks, edit lines', () => {
   a = recordTool(a, 'mcp__linear__create_issue', {})
   expect(a.lastTool).toEqual({ name: 'linear:create_issue', target: undefined })
   expect(a.recentTools?.map((t) => t.name)).not.toContain('Agent')
+})
+
+test('the agent history outlives the engine\'s roster, teammates included', () => {
+  const a1 = { id: 'a1', type: 'general-purpose', description: 'Count to 100', status: 'running' }
+  const ann = { id: 't1', type: 'teammate', description: 'Review', status: 'running', mate: true, name: 'ann' }
+  let ag = mergeAgents(emptyActivity().agents, { members: [a1, ann] })
+  expect([ag.running, ag.teammates, ag.list?.length]).toEqual([1, ['ann'], 2])
+  ag = mergeAgents(ag, { members: [{ ...a1, status: 'completed' }, { ...ann, status: 'idle' }] })
+  // The roster has dropped the agent: still listed, still counted; teammates are who is on the team now.
+  ag = mergeAgents(ag, { members: [{ ...ann, status: 'idle' }] })
+  expect(ag.list?.map((x) => `${x.id}:${x.status}`)).toEqual(['a1:completed', 't1:idle'])
+  expect([ag.running, ag.completed, ag.teammates]).toEqual([0, 1, ['ann']])
+  // One that vanished while running is marked ended, and a new one joins after it.
+  ag = mergeAgents(ag, { members: [{ id: 'a2', type: 'Explore', description: 'look', status: 'running' }] })
+  ag = mergeAgents(ag, { members: [] })
+  expect(ag.list?.map((x) => `${x.id}:${x.status}`)).toEqual(['a1:completed', 't1:idle', 'a2:ended'])
+  expect([ag.running, ag.completed, ag.teammates]).toEqual([0, 2, []])
 })
 
 test('only blocks that run this plugin\'s 1.x scripts count as legacy', () => {

@@ -190,6 +190,7 @@ export function buildSections(x: Inputs, cfg: Config, glyphs: boolean, room = 80
     usage: () => usageRow(x, on, icon),
     turn: () => turnRow(x, on, icon),
     activity: () => activityRow(x, on, icon),
+    agents: () => agentsRow(x, on, icon),
     repo: () => repoRow(x, on, icon),
     config: () => configRow(x, on, icon),
     exts: () => extsRow(x, on, icon),
@@ -199,6 +200,7 @@ export function buildSections(x: Inputs, cfg: Config, glyphs: boolean, room = 80
   const details: Partial<Record<RowId, () => Run[][]>> = {
     turn: () => turnDetail(x, on),
     activity: () => activityDetail(x, on),
+    agents: () => agentsDetail(x, on, glyphs),
     repo: () => repoDetail(x, on),
   }
   return cfg.rows.map((id) => {
@@ -269,15 +271,6 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
       ...(c.n > 1 ? [d(` ×${c.n}`)] : []),
     ])
     lines.push(calls.flatMap((c, i) => (i ? [d('  '), ...c] : c)))
-  }
-  // The session's sub-agents in the order they started, newest last: what each was asked to do
-  // and how it ended.
-  if (a.agents.list?.length && on('activity.agents')) {
-    for (const ag of a.agents.list) {
-      const col = ag.status === 'completed' ? GOOD : ag.status === 'failed' || ag.status === 'killed' ? BAD : CYAN
-      const mark = ag.status === 'completed' ? OK : ag.status === 'failed' || ag.status === 'killed' ? NO : '●'
-      lines.push([v(`${mark} `, col), v(ag.type), d(`  ${ag.description}`)])
-    }
   }
   return lines
 }
@@ -481,20 +474,6 @@ function activityRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Sectio
     const col = a.running > 0 ? WARN : undefined // yellow while a tool is mid-run
     items.push(pair([...icon(G.tools, col), v(label), d(` (${a.toolCalls} call${a.toolCalls === 1 ? '' : 's'})`)], [...icon(G.tools, col), v(truncate(label, 24))]))
   }
-  // Counts only: how many sub-agents run now and a green tally of finished ones (failed in red).
-  const ag = a.agents
-  if ((ag.running > 0 || ag.completed > 0 || ag.failed > 0) && on('activity.agents')) {
-    const bits: Run[][] = []
-    if (ag.running > 0) bits.push([v(`${ag.running} running`)])
-    if (ag.completed > 0) bits.push([v(`${OK} ${ag.completed}`, GOOD)])
-    if (ag.failed > 0) bits.push([v(`${NO} ${ag.failed}`, BAD)])
-    items.push(plain([...icon(G.model, ag.running > 0 ? CYAN : undefined), ...bits.flatMap((b, i) => (i ? [d(' · '), ...b] : b))]))
-  }
-  if (ag.teammates.length && on('activity.team')) {
-    const head = [...icon(G.team, c256(43)), v(String(ag.teammates.length))]
-    const list = ag.teammates.slice(0, 3).join(', ') + (ag.teammates.length > 3 ? ', …' : '')
-    items.push(pair([...head, d(` (${truncate(list, 40)})`)], head))
-  }
   if ((a.linesAdded > 0 || a.linesRemoved > 0) && on('activity.lines')) {
     const diff: Run[] = []
     if (a.linesAdded > 0) diff.push(v(`+${a.linesAdded}`, GOOD))
@@ -502,6 +481,49 @@ function activityRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Sectio
     items.push(plain([...icon(G.lines, PENCIL), ...diff]))
   }
   return { id: 'activity', label: 'Activity', items }
+}
+
+// ── Agents ───────────────────────────────────────────────────────────────────────────────────────
+// Sub-agents and agent-team teammates, apart from Activity's tool calls: both run often enough to
+// want their own history. Closed: how many sub-agents run, a green tally of finished ones (failed in
+// red), and who is on the team. Open: the history, newest last (agentsDetail).
+
+const isLive = (st: string) => st === 'running' || st === 'pending' || st === 'waiting'
+
+function agentsRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
+  const items: Item[] = []
+  const ag = x.activity?.agents
+  if (!ag) return { id: 'agents', label: 'Agents', items }
+  if ((ag.running > 0 || ag.completed > 0 || ag.failed > 0) && on('agents.subagents')) {
+    const bits: Run[][] = []
+    if (ag.running > 0) bits.push([v(`${ag.running} running`)])
+    if (ag.completed > 0) bits.push([v(`${OK} ${ag.completed}`, GOOD)])
+    if (ag.failed > 0) bits.push([v(`${NO} ${ag.failed}`, BAD)])
+    items.push(plain([...icon(G.model, ag.running > 0 ? CYAN : undefined), ...bits.flatMap((b, i) => (i ? [d(' · '), ...b] : b))]))
+  }
+  if (ag.teammates.length && on('agents.team')) {
+    const head = [...icon(G.person, c256(43)), v(String(ag.teammates.length))]
+    const list = ag.teammates.slice(0, 3).join(', ') + (ag.teammates.length > 3 ? ', …' : '')
+    items.push(pair([...head, d(` (${truncate(list, 40)})`)], head))
+  }
+  return { id: 'agents', label: 'Agents', items }
+}
+
+// The last six sub-agents and teammates, plus any older one still running: a robot or a person,
+// what it is, what it was asked, and where it stands.
+function agentsDetail(x: Inputs, on: (id: string) => boolean, glyphs: boolean): Run[][] {
+  const all = x.activity?.agents.list ?? []
+  if (!all.length || !on('agents.history')) return []
+  return all
+    .filter((a, i) => i >= all.length - 6 || isLive(a.status))
+    .map((a) => {
+      const done = a.status === 'completed' || a.status === 'ended'
+      const failed = a.status === 'failed' || a.status === 'killed'
+      const idle = a.status === 'idle'
+      const [mark, col] = done ? [OK, GOOD] : failed ? [NO, BAD] : idle ? ['◌', undefined] : ['●', WARN]
+      const who = glyphs ? [{ t: a.mate ? G.person : G.model, c: a.mate ? c256(43) : CYAN }, { t: ' ' }] : []
+      return [v(`${mark} `, col), ...who, v(a.mate ? a.name ?? a.type : a.type), d(`  ${a.description}`)]
+    })
 }
 
 // ── Repo ─────────────────────────────────────────────────────────────────────────────────────────

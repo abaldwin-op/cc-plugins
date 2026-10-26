@@ -152,8 +152,11 @@ export type Activity = {
     completed: number
     failed: number
     teammates: string[]
-    /** For the open view: the session's sub-agents, running ones first. */
-    list?: Array<{ type: string; description: string; status: string }>
+    /**
+     * The session's sub-agents and teammates in start order, kept by the mod: the engine's roster drops an agent
+     * soon after it finishes, so this is the history (each with its last-seen status).
+     */
+    list?: Array<{ id?: string; type: string; description: string; status: string; mate?: boolean; name?: string }>
   }
   /** For the open view: the last few tool calls (newest last); `ok` once answered. */
   recentTools?: Array<{ name: string; target?: string; ok?: boolean }>

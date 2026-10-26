@@ -401,24 +401,25 @@ export function parseApiUsage(u: any, now: number): ApiUsage {
 
 // ── agents ───────────────────────────────────────────────────────────────────────────────────────
 
-export async function collectAgents($: $) {
+/** The agent roster as the engine has it now, in start order: sub-agents and agent-team teammates. */
+export async function collectAgents($: $): Promise<{ members: AgentEntry[] } | null> {
   try {
     const all = await $.agent.list()
-    const subs = all.filter((a) => !a.teammateId)
     return {
-      running: subs.filter((a) => a.status === 'running' || a.status === 'pending' || a.status === 'waiting').length,
-      completed: subs.filter((a) => a.status === 'completed').length,
-      failed: subs.filter((a) => a.status === 'failed' || a.status === 'killed').length,
-      teammates: all.filter((a) => a.teammateId).map((a) => a.name ?? a.teammateId?.split('@')[0] ?? '?'),
-      // In start order (the roster's), the last five, plus any older one still running.
-      list: subs
-        .filter((a, i) => i >= subs.length - 5 || a.status === 'running' || a.status === 'pending' || a.status === 'waiting')
-        .map((a) => ({ type: a.type, description: a.description, status: a.status })),
+      members: all.map((a) => ({
+        id: a.id,
+        type: a.type,
+        description: a.description,
+        status: a.status,
+        ...(a.teammateId ? { mate: true, name: a.name ?? a.teammateId.split('@')[0] } : {}),
+      })),
     }
   } catch {
-    return { running: 0, completed: 0, failed: 0, teammates: [] }
+    return null
   }
 }
+
+export type AgentEntry = { id: string; type: string; description: string; status: string; mate?: boolean; name?: string }
 
 // ── config counts ────────────────────────────────────────────────────────────────────────────────
 // Scopes, broad → narrow: m = managed (policy), u = user (~/.claude), p = project (committed in the

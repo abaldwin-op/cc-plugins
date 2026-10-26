@@ -1,7 +1,7 @@
 {
   "name": "agent-panel",
   "displayName": "Agent Panel",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Styles the rows of Claude Code's agent panel for sub-agents and agent-team teammates: name or type, live progress, model and effort, a coloured status glyph, elapsed time and tokens. Nothing written to your settings. Requires Bun.",
   "author": { "name": "Anthony Baldwin", "url": "https://github.com/anthonybaldwin" },
   "homepage": "https://github.com/anthonybaldwin/cc-plugins/tree/main/plugins/agent-panel",
