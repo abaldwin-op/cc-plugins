@@ -241,19 +241,20 @@ test('tool calls fold into the activity: todos, tasks, edit lines', () => {
   expect(a.recentTools?.map((t) => t.name)).not.toContain('Agent')
 })
 
-test('the agent history outlives the engine\'s roster', () => {
+test('the agent history outlives the engine\'s roster, teammates included', () => {
   const a1 = { id: 'a1', type: 'general-purpose', description: 'Count to 100', status: 'running' }
-  let ag = mergeAgents(emptyActivity().agents, { subs: [a1], teammates: [] })
-  expect([ag.running, ag.list?.length]).toEqual([1, 1])
-  ag = mergeAgents(ag, { subs: [{ ...a1, status: 'completed' }], teammates: [] })
-  // The roster has dropped it: still listed, still counted.
-  ag = mergeAgents(ag, { subs: [], teammates: [] })
-  expect(ag.list?.map((x) => x.status)).toEqual(['completed'])
-  expect([ag.running, ag.completed]).toEqual([0, 1])
+  const ann = { id: 't1', type: 'teammate', description: 'Review', status: 'running', mate: true, name: 'ann' }
+  let ag = mergeAgents(emptyActivity().agents, { members: [a1, ann] })
+  expect([ag.running, ag.teammates, ag.list?.length]).toEqual([1, ['ann'], 2])
+  ag = mergeAgents(ag, { members: [{ ...a1, status: 'completed' }, { ...ann, status: 'idle' }] })
+  // The roster has dropped the agent: still listed, still counted; teammates are who is on the team now.
+  ag = mergeAgents(ag, { members: [{ ...ann, status: 'idle' }] })
+  expect(ag.list?.map((x) => `${x.id}:${x.status}`)).toEqual(['a1:completed', 't1:idle'])
+  expect([ag.running, ag.completed, ag.teammates]).toEqual([0, 1, ['ann']])
   // One that vanished while running is marked ended, and a new one joins after it.
-  ag = mergeAgents(ag, { subs: [{ id: 'a2', type: 'Explore', description: 'look', status: 'running' }], teammates: ['ann'] })
-  ag = mergeAgents(ag, { subs: [], teammates: [] })
-  expect(ag.list?.map((x) => `${x.id}:${x.status}`)).toEqual(['a1:completed', 'a2:ended'])
+  ag = mergeAgents(ag, { members: [{ id: 'a2', type: 'Explore', description: 'look', status: 'running' }] })
+  ag = mergeAgents(ag, { members: [] })
+  expect(ag.list?.map((x) => `${x.id}:${x.status}`)).toEqual(['a1:completed', 't1:idle', 'a2:ended'])
   expect([ag.running, ag.completed, ag.teammates]).toEqual([0, 2, []])
 })
 

@@ -401,18 +401,25 @@ export function parseApiUsage(u: any, now: number): ApiUsage {
 
 // ── agents ───────────────────────────────────────────────────────────────────────────────────────
 
-/** The agent roster as the engine has it now: sub-agents in start order, and teammate names. */
-export async function collectAgents($: $): Promise<{ subs: Array<{ id: string; type: string; description: string; status: string }>; teammates: string[] } | null> {
+/** The agent roster as the engine has it now, in start order: sub-agents and agent-team teammates. */
+export async function collectAgents($: $): Promise<{ members: AgentEntry[] } | null> {
   try {
     const all = await $.agent.list()
     return {
-      subs: all.filter((a) => !a.teammateId).map((a) => ({ id: a.id, type: a.type, description: a.description, status: a.status })),
-      teammates: all.filter((a) => a.teammateId).map((a) => a.name ?? a.teammateId?.split('@')[0] ?? '?'),
+      members: all.map((a) => ({
+        id: a.id,
+        type: a.type,
+        description: a.description,
+        status: a.status,
+        ...(a.teammateId ? { mate: true, name: a.name ?? a.teammateId.split('@')[0] } : {}),
+      })),
     }
   } catch {
     return null
   }
 }
+
+export type AgentEntry = { id: string; type: string; description: string; status: string; mate?: boolean; name?: string }
 
 // ── config counts ────────────────────────────────────────────────────────────────────────────────
 // Scopes, broad → narrow: m = managed (policy), u = user (~/.claude), p = project (committed in the

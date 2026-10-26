@@ -33,7 +33,7 @@ export type Section = {
   detail?: Run[][]
 }
 
-export const ROW_IDS = ['model', 'limits', 'usage', 'turn', 'activity', 'repo', 'config', 'exts', 'host', 'info'] as const
+export const ROW_IDS = ['model', 'limits', 'usage', 'turn', 'activity', 'agents', 'repo', 'config', 'exts', 'host', 'info'] as const
 export type RowId = (typeof ROW_IDS)[number]
 
 /** Labels pad to this, as the status line's did; the toggle glyph and a space sit before it. */
@@ -190,7 +190,7 @@ export function packSection(section: Section, width: number, indent: number, max
 // ── planning ─────────────────────────────────────────────────────────────────────────────────────
 
 /** Which section vanishes first when even one line each won't fit: essentials last. */
-export const DROP_ORDER: RowId[] = ['exts', 'config', 'host', 'activity', 'turn', 'repo', 'usage', 'info', 'limits', 'model']
+export const DROP_ORDER: RowId[] = ['exts', 'config', 'host', 'agents', 'activity', 'turn', 'repo', 'usage', 'info', 'limits', 'model']
 
 export type PlannedRow = {
   id: RowId

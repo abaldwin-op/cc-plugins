@@ -35,8 +35,8 @@ The dashboard re-reads it every minute and at each session start; no restart.
 | `pr` | boolean | `true` | `false` never runs `gh` for the Repo row's PR badge. |
 | `maxRows` | positive integer | none | Caps the dashboard's height. It can only lower the built-in budget. |
 
-**Row ids**, in the default order: `model`, `limits`, `usage`, `turn`, `activity`, `repo`,
-`config`, `exts`, `host`, `info`.
+**Row ids**, in the default order: `model`, `limits`, `usage`, `turn`, `activity`, `agents`,
+`repo`, `config`, `exts`, `host`, `info`.
 
 **Widget ids** for `hide`:
 
@@ -45,8 +45,9 @@ The dashboard re-reads it every minute and at each session start; no restart.
   (gateway `Sp`), `limits.credits` (`Cr`)
 - `usage.cost`, `usage.burn` ($/h), `usage.speed` (tok/s), `usage.api`, `usage.duration`
 - `turn.tokens`, `turn.cache` (prompt-cache health), `turn.history` (the open row's last turns)
-- `activity.command`, `activity.todo`, `activity.tool`, `activity.agents`, `activity.team`,
-  `activity.lines`
+- `activity.command`, `activity.todo`, `activity.tool`, `activity.lines`
+- `agents.subagents` (running / ✔ / ✘ counts), `agents.team` (teammates), `agents.history` (the open
+  row's list of sub-agents and teammates)
 - `repo.remote`, `repo.worktree`, `repo.branch`, `repo.pr`, `repo.tag`, `repo.files` (the open row's last commit and changed files)
 - `config.instructions`, `config.memory`, `config.agents`, `config.commands`, `config.skills`,
   `config.workflows`, `config.routines`, `config.rules`, `config.mcp`, `config.connectors`,

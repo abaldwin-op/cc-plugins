@@ -17,9 +17,8 @@
 // Docs: https://code.claude.com/docs/en/statusline#subagent-status-lines
 //
 // Wiring: the plugin's own settings.json sets `subagentStatusLine` (one of the two keys a plugin's
-// settings may set), so nothing is written to the user's settings and an uninstall removes it. The
-// install path moves with every version, so the command (a `bun -e` one-liner, shell-agnostic)
-// looks this file up through Claude Code's plugins/installed_plugins.json on each run.
+// settings may set), pointing at the copy hooks/hooks.json's SessionStart hook keeps in the
+// plugin's data dir — so nothing is written to the user's settings, and an uninstall removes both.
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";

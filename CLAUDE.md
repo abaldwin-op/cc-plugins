@@ -105,13 +105,14 @@ The agent panel's rows (`subagentStatusLine`) for sub-agents and agent-team team
 of statusline-dashboard 1.x. `agent-panel.js` is a single-file Bun script: JSON on stdin (`columns`,
 `tasks[]`), one `{"id","content"}` line per row out, every row clamped to `columns - 1` cells with
 `vlen` (Nerd Font PUA glyphs count 2). Wiring needs no settings edit: the plugin's root
-`settings.json` sets `subagentStatusLine` (with `agent`, the only keys a plugin's settings take).
-Its command is a `bun -e` one-liner (no shell syntax, so bash/cmd/PowerShell all run it — Claude
-Code picks the shell on Windows) that reads `<CLAUDE_CONFIG_DIR or ~/.claude>/plugins/installed_plugins.json`
-for `agent-panel@cc-plugins`'s current `installPath` and imports `agent-panel.js` from there: the
-docs promise no `${CLAUDE_PLUGIN_ROOT}` in that command, and the root moves per version. Nothing
-is staged. A user's own `subagentStatusLine` in `~/.claude/settings.json` outranks the plugin's.
-It reads the `subagent.*` ids from statusline-dashboard's config file's `hide` list.
+`settings.json` sets `subagentStatusLine` (with `agent`, the only keys a plugin's settings take),
+and its command (`bun -e "import(…)"`, resolving `CLAUDE_CONFIG_DIR` or the home dir in JS so it
+runs the same under bash, cmd and PowerShell — Claude Code picks the shell on Windows) loads
+`<config dir>/plugins/data/agent-panel-cc-plugins/agent-panel.js`, which `scripts/stage.js` (SessionStart hook; silent, always exit 0) keeps current — the docs
+promise no `${CLAUDE_PLUGIN_ROOT}` substitution in that command, and the root moves per version.
+The path in `settings.json` and the data dir must agree. A user's own `subagentStatusLine` in
+`~/.claude/settings.json` outranks the plugin's. It reads the `subagent.*` ids from
+statusline-dashboard's config file's `hide` list.
 
 ## plugins/session-color
 

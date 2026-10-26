@@ -57,10 +57,12 @@ it's up.
   - **Model**: the context window broken down by category, as `/context` shows it — a stacked
     bar, one colour per category, and a legend.
   - **Turn**: the last five turns — duration, output, input and how much of it came from the cache.
-  - **Activity**: the todo list around the current item, the last tool calls with what each acted
-    on (✔ answered, ✘ failed, … running; repeats collapse to `×n`), and the session's last five
-    sub-agents in the order they started, each with its task and how it ended. The dashboard keeps
-    this history itself, because Claude Code's agent list drops an agent soon after it finishes.
+  - **Activity**: the todo list around the current item, and the last tool calls with what each
+    acted on (✔ answered, ✘ failed, … running; repeats collapse to `×n`).
+  - **Agents**: the session's last six sub-agents and teammates in the order they started, each
+    with a robot (sub-agent) or person (teammate), its type or name, its task and where it stands.
+    The dashboard keeps this history itself, because Claude Code's agent list drops an agent soon
+    after it finishes.
   - **Repo**: the last commit and the first changed files.
 - **Height budget.** In fullscreen the dashboard takes what the bottom slot has left. On the main
   screen it takes at most a third of the terminal, so the conversation keeps its room. Over
@@ -90,8 +92,9 @@ it's up.
 - **Turn**: the last call's token makeup (input / output / cache write / cache read) and the
   session's prompt-cache hit ratio.
 - **Activity**: the active slash command, todo or task progress, the last tool call (yellow while
-  it runs) with a call count, sub-agents (running, a green ✔ tally of finished ones, a red ✘ for
-  failed ones), agent-team teammates, and the session's edit volume (+added / −removed lines).
+  it runs) with a call count, and the session's edit volume (+added / −removed lines).
+- **Agents**: sub-agents (running, a green ✔ tally of finished ones, a red ✘ for failed ones) and
+  the agent-team teammates on the team now.
 - **Repo** (inside a git repository only): project name, origin owner with a GitHub / GitLab /
   Bitbucket badge, worktree, branch with ahead/behind and staged / modified / untracked /
   conflict counts, and the latest `v*` tag with commits since. With an authed
@@ -170,7 +173,7 @@ The file lives outside the plugin, so updates and uninstalls never touch it.
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `rows` | all rows | Which rows render, and in what order: `model`, `limits`, `usage`, `turn`, `activity`, `repo`, `config`, `exts`, `host`, `info`. |
+| `rows` | all rows | Which rows render, and in what order: `model`, `limits`, `usage`, `turn`, `activity`, `agents`, `repo`, `config`, `exts`, `host`, `info`. |
 | `hide` | `[]` | Row ids or individual widget ids to drop (listed below). |
 | `expanded` | `[]` | Rows open by default, until you first open or close one yourself. |
 | `labels` | `true` | `false` drops the row labels. The ▸/▾ toggles stay. |
@@ -189,7 +192,8 @@ Widget ids for `hide`:
 | Limits | `limits.5h` `limits.7d` `limits.scoped` `limits.spend` `limits.credits` |
 | Usage | `usage.cost` `usage.burn` `usage.speed` `usage.api` `usage.duration` |
 | Turn | `turn.tokens` `turn.cache` `turn.history` |
-| Activity | `activity.command` `activity.todo` `activity.tool` `activity.agents` `activity.team` `activity.lines` |
+| Activity | `activity.command` `activity.todo` `activity.tool` `activity.lines` |
+| Agents | `agents.subagents` `agents.team` `agents.history` |
 | Repo | `repo.remote` `repo.worktree` `repo.branch` `repo.pr` `repo.tag` `repo.files` |
 | Config | `config.instructions` `config.memory` `config.agents` `config.commands` `config.skills` `config.workflows` `config.routines` `config.rules` `config.mcp` `config.connectors` `config.chrome` `config.hooks` `config.plugins` `config.themes` `config.dirs` `config.scopes` |
 | Exts. | `exts.lsp` `exts.monitors` `exts.bin` `exts.channels` |

@@ -28,10 +28,11 @@ Rows are cut to the panel's width, never wrapped. It uses Claude Code's
 /plugin install agent-panel@cc-plugins
 ```
 
-Then start a new session. Nothing is written to your settings. The plugin's own `settings.json`
-supplies `subagentStatusLine` (a plugin may set that key). The plugin's install path changes with
-every update, so the command looks it up in Claude Code's `installed_plugins.json` each time and
-runs the script from there. Nothing is copied anywhere.
+Then **start a new session**: Claude Code reads a plugin's settings when a session starts. Nothing
+is written to your settings. The plugin's own `settings.json` supplies `subagentStatusLine` (a
+plugin may set that key). A `SessionStart` hook keeps a copy of the script in the plugin's data
+directory, `~/.claude/plugins/data/agent-panel-cc-plugins/`, because the plugin's install path
+changes with every update.
 
 ## Requirements
 
@@ -57,13 +58,15 @@ otherwise that block keeps overriding this plugin.
 
 ## Uninstall
 
-`/plugin uninstall agent-panel@cc-plugins`. This removes the setting, and the agent panel goes back
-to Claude Code's default rows. Nothing else is left behind.
+`/plugin uninstall agent-panel@cc-plugins`. This removes the setting and the data directory, and
+the agent panel goes back to Claude Code's default rows.
 
 ## Troubleshooting
 
 If the rows stay plain after a new session:
 
+- Make sure you started a new session after installing or updating. The first one also stages the
+  script.
 - Check `~/.claude/settings.json` for a `subagentStatusLine` of your own, for example one left by
   statusline-dashboard 1.x. Yours takes precedence over the plugin's. `/dash cleanup` removes the
   1.x one.

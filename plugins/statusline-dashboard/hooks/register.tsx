@@ -20,6 +20,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Activity, Repo, View } from '../types'
 import {
   collectAgents,
+  type AgentEntry,
   collectApi,
   collectBreakdown,
   collectCounts,
@@ -151,26 +152,28 @@ async function refreshAgents($: EngineInterface): Promise<void> {
 const isLive = (status: string) => status === 'running' || status === 'pending' || status === 'waiting'
 
 /**
- * Folds the engine's current roster into the session's agent history. The roster drops an agent
- * soon after it finishes, so an agent missing from it keeps its last-seen status, and one last
- * seen still running is marked `ended` (it finished between two looks; how, the roster no longer
- * says). Counts come from the history, so a finished agent stays counted.
+ * Folds the engine's current roster into the session's agent history (sub-agents and teammates).
+ * The roster drops an agent soon after it finishes, so one missing from it keeps its last-seen
+ * status, and one last seen still running is marked `ended` (it finished between two looks; how,
+ * the roster no longer says). Sub-agent counts come from the history, so a finished agent stays
+ * counted; teammates are the ones on the team now.
  */
-export function mergeAgents(prev: Activity['agents'], live: { subs: Array<{ id: string; type: string; description: string; status: string }>; teammates: string[] }): Activity['agents'] {
-  const now = new Map(live.subs.map((x) => [x.id, x]))
+export function mergeAgents(prev: Activity['agents'], live: { members: AgentEntry[] }): Activity['agents'] {
+  const now = new Map(live.members.map((x) => [x.id, x]))
   const list = (prev.list ?? []).map((x) => {
     const seen = x.id ? now.get(x.id) : undefined
     if (seen) return seen
     return isLive(x.status) ? { ...x, status: 'ended' } : x
   })
   const known = new Set(list.map((x) => x.id))
-  for (const x of live.subs) if (!known.has(x.id)) list.push(x)
+  for (const x of live.members) if (!known.has(x.id)) list.push(x)
   const kept = list.slice(-20)
+  const subs = kept.filter((x) => !x.mate)
   return {
-    running: kept.filter((x) => isLive(x.status)).length,
-    completed: kept.filter((x) => x.status === 'completed' || x.status === 'ended').length,
-    failed: kept.filter((x) => x.status === 'failed' || x.status === 'killed').length,
-    teammates: live.teammates,
+    running: subs.filter((x) => isLive(x.status)).length,
+    completed: subs.filter((x) => x.status === 'completed' || x.status === 'ended').length,
+    failed: subs.filter((x) => x.status === 'failed' || x.status === 'killed').length,
+    teammates: live.members.filter((x) => x.mate).map((x) => x.name ?? x.type),
     list: kept,
   }
 }
