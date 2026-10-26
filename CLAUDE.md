@@ -2,7 +2,7 @@
 
 A Claude Code plugin marketplace (`.claude-plugin/marketplace.json`, name `cc-plugins`) with one
 plugin per `plugins/<name>/` folder. Each plugin is self-contained — its own manifest, hooks,
-skills, sources and README — and the root holds only the marketplace file, `check.js`, CI and docs.
+skills, sources and README — and the root holds only the marketplace file, CI and docs.
 
 ## Repo-wide rules
 
@@ -33,155 +33,71 @@ skills, sources and README — and the root holds only the marketplace file, `ch
 
 ## plugins/statusline-dashboard
 
-An opinionated multi-row statusline dashboard. Single-file Bun scripts, no dependencies, no
-build step.
+A **mod** (a plugin of function hooks, Claude Code 2.1.287+) that draws an opinionated dashboard
+in the band above the prompt: one collapsible row per section. 2.x replaced the 1.x Bun
+`statusLine` scripts (and absorbed the old context-bar mod as the Model row's open view) because a
+mod needs no settings.json edit — uninstall leaves nothing behind but the user's config file.
+Load the `plugin-authoring` skill before editing it: the API is the build's `claude-code.d.ts`,
+and the static validator has rules of its own — helpers that take `$` must be top-level function
+declarations (they may live in imported files), `$` is always spelled `$.noun.method(...)`,
+`$.env.get` takes string literals, `atom()` refs need literal `plugin`/`key`, and every `$.state`
+key must be declared in `types/index.d.ts`.
 
 ### Files
 
-- `statusline.js` — the main dashboard. Reads Claude Code's statusline JSON from stdin, writes
-  ANSI-styled rows to stdout. Everything lives in this one file, ordered roughly: ANSI/color
-  constants → glyphs → formatting helpers → config-counting subsystem (scopes, plugins, MCP) →
-  stdin parse → per-row segment building → `packSection` layout → output.
-- `subagent-statusline.js` — the per-subagent row for Claude Code's agent panel
-  (`subagentStatusLine` in settings). Same conventions, much smaller.
-- `install.js` — points `~/.claude/settings.json` at the scripts in ITS OWN directory (merges,
-  backs up first). Run from the checkout it wires the checkout; run from the plugin data dir (via
-  the `setup` skill) it wires the staged copies. `--print` for a dry run; `--uninstall` clears
-  only blocks that point at that directory.
-- `hooks/hooks.json` + `scripts/stage.js` — `SessionStart` hook that copies the three scripts
-  into `${CLAUDE_PLUGIN_DATA}` so settings can point at a stable path (see repo-wide rules). Must
-  stay silent (SessionStart stdout is injected into Claude's context) and always exit 0. Adding a
-  file the status line needs at runtime = adding it to `FILES` there (and the `staged` list in
-  `check.js`).
-- `skills/setup/SKILL.md` — `/statusline-dashboard:setup`: stages, then runs `install.js` from the
-  data dir (`--print` / `--uninstall` pass through).
-- `skills/configure/SKILL.md` — `/statusline-dashboard:configure`: edits the user config file,
-  `~/.claude/statusline-dashboard.json` (`CLAUDE_STATUSLINE_CONFIG` overrides the path). It lives
-  outside the plugin so both install kinds share it and updates never clobber it. Both scripts
-  read it: row selection/order, `hide` widget ids (gated with `on("row.widget")`), `labels`,
-  `bars`, `pace`, `clock`, `usageApi`, `maxRows`. A new widget gets an id, and the README table
-  and the skill's id list must stay in sync with the `on(...)` calls.
-- `/check.js` (repo root) — the invariant checker (see below).
+- `hooks/register.tsx` — event wiring, the `/dash` command, and the `AbovePrompt` render hook.
+  Data flows one way: event hooks collect into `$.state`; the render hook only reads (a write
+  redraws exactly the band). Slow work (git, config scans, the usage API) runs from
+  `$.clock.after(0, …)` timers, never on an event's dispatch, so it can't delay a prompt.
+  Observing hooks on gating events (`tool.call`, `prompt.submit`, `classic.SessionStart`) carry
+  `.catch(($, e, next) => next(e))`. `recordTool`/`editLines` are pure and exported for tests.
+- `hooks/collect.ts` — every engine/fs/git/network read: usage, the context breakdown (instruction
+  files, agents, skills, MCP servers come from it — engine truth, not file guesses), git + `gh pr
+  view` (5-min TTL per branch), host/fleet, config counts (disk + `$.settings.read({ source })`,
+  trust-gated), the OAuth usage API via `$.session.authorize()` (the credential never reaches the
+  mod), and the 1.x legacy cleanup. Each collector swallows its own failures.
+- `hooks/sections.ts` — pure row builders (state in, `Section[]` out), user-config parsing, Nerd
+  Font glyph table. Widget ids (`on("row.widget")`) must stay in sync with the README table and
+  the configure skill's id list.
+- `hooks/layout.ts` — pure layout: `Run`/`Item`/`Section`, `packSection` (the status line's
+  packer, carried over), `plan` (height budget), `contextDetail`/`stack` (the breakdown bar),
+  `stripLabels`, formatting. Tests check its arithmetic directly.
+- `types/index.d.ts` — the `$.state` contract.
+- `tests/dashboard.test.tsx` — `claude plugin test plugins/statusline-dashboard`.
+- `skills/configure/SKILL.md` — edits the user config, `~/.claude/statusline-dashboard.json`
+  (`CLAUDE_STATUSLINE_CONFIG` overrides the path); outside the plugin so updates and uninstalls
+  never touch it.
 
-### Running / verifying changes
+### Layout invariants
 
-Requires **Bun** (`Bun.stdin` / `Bun.main`). Run `bun check.js` (from the repo root) after any
-change to the packer, height budget, or output shape: it renders fixture payloads for both
-scripts across a grid of `COLUMNS`×`LINES` inside a sandboxed `HOME`/`TEMP` (no real config, no
-live caches, no network) and asserts the invariants below plus a "no data-less rows" rule and the
-staging hook's contract. `--show 60x24` prints one stripped render. For a specific payload, pipe
-it in by hand:
-
-```sh
-echo '{"session_id":"x","model":{"display_name":"Opus"},"cwd":"C:/some/repo","cost":{},
-  "context_window":{"context_window_size":200000,"current_usage":{"input_tokens":50000}},
-  "rate_limits":{"five_hour":{"used_percentage":42,"resets_at":"2026-06-12T20:00:00Z"}}}' \
-  | COLUMNS=140 bun plugins/statusline-dashboard/statusline.js
-```
-
-The user's live statusline may run `statusline.js` **directly from this working tree** (a
-checkout install points settings at the repo file, not a copy) — edits take effect on the next
-render, including broken ones. Don't leave the file in a non-running state between edits.
-(Plugin installs run the staged copy in `~/.claude/plugins/data/` instead and only pick up a
-`version` bump.) A new row also means bumping `SECTIONS` in `check.js`, and updating the README
-row list — it enumerates every row in render order.
-
-### Critical invariants
-
-These exist to dodge real Claude Code rendering bugs; violating them corrupts the user's
-terminal, not just the aesthetics.
-
-1. **Height never shrinks between renders, and never exceeds what the terminal can spare.**
-   Shrink: CC reserves vertical space from the previous render's line count; if the count drops,
-   stale rows stack (under-clear, fixed upstream in CC v2.1.170 but kept defensive). Guarded by
-   the slot floor (empty sections backfill blank) AND a per-session high-water mark
-   (`sl-hwm-*.json`, keyed to `COLUMNS×LINES`) that pads later renders up to the tallest height
-   already shown; the mark resets on resize (which forces a full CC repaint anyway). Short
-   terminal: CC gives the statusline what remains after the turn's transcript tail + prompt +
-   its own footer, and hard-trims our tail AND the footer when we exceed it (observed
-   v2.1.223) — the transcript share is unknowable, so content clamps to a THIRD of `LINES`
-   (CC's exported height belief); over budget, the squeeze loop re-packs the tallest section
-   (ties by `SQUEEZE_ORDER`) one row shorter via `packSection`'s `maxRows` (cut with a trailing
-   `…`), then whole sections vanish in `DROP_ORDER`. Tall terminal: wraps beyond the section
-   count are allowed (no `…` data loss) up to `WRAP_HEADROOM` extra rows. **Adding a row =
-   adding one entry to `sectionSpecs`** (and to `SQUEEZE_ORDER` + `DROP_ORDER` + `ROW_IDS`);
-   never conditionally omit a slot. The user config's row selection is the one exception: it
-   filters `sectionSpecs` up front (a static choice, not a per-render one), and the config file's
-   mtime joins the high-water-mark key so an edit resets the mark. Its `maxRows` can only lower
-   the budget.
-2. **Lines must never exceed the terminal width.** CC counts logical lines; a terminal
-   hard-wrap desyncs its repaint. `packSection` measures with `vlen` (visible width, ANSI-, OSC 8 link- and
-   wide-glyph-aware) and degrades per item: widest alt → narrowest alt → wrap to a fresh row →
-   truncate the narrow alt with `…` when even that overflows a row on its own (any alt count —
-   an unclipped over-wide item is exactly the hard-wrap this guards against). Width comes from
-   `COLUMNS || stdout.columns || 80` — never a huge fallback (a `1e9` fallback once corrupted
-   the terminal).
-3. **U+2800 (Braille blank), not spaces, for indentation and blank rows.** CC strips leading
-   whitespace and trailing blank rows; U+2800 renders blank but isn't whitespace.
-4. **Never block the render on the network.** Slow data (OAuth usage API) is served from a
-   TTL'd temp-file cache; a stale cache triggers a detached self-respawn
-   (`CLAUDE_STATUSLINE_USAGE_REFRESH=1`) that refreshes out-of-band and exits before the stdin
-   read. Cross-render state lives in `$TEMP/sl-*.json` files (usage cache,
-   per-session accumulators).
-
-### Layout conventions
-
-- A row's content is a list of **segments**: plain strings, or `{ alts: [wide, narrow] }` where
-  the packer uses `alts[0]` when the row fits and `alts[alts.length - 1]` when space is tight
-  (bars and parenthesized detail go in the wide form only).
-- `packSection(label, segments, lead, leadWidth, preferDetail, maxRows)` does the layout:
-  all-widest on one line → all-narrowest on one line (skipped when `preferDetail`) → greedy
-  per-item wrap, cut with `…` when `maxRows` is hit (only the height-cap squeeze loop passes
-  `maxRows`). A finite `maxRows` flips the section into **squeeze mode**: items go narrow-first
-  and the all-narrow probe runs even for `preferDetail` sections, because under a row budget a
-  cut item is lost outright while a dropped bar or scope paren is only detail. The first item on
-  an empty row always tries its narrow form, then truncates in place, before any wrap/cut — a
-  row must never emit just its label and `…`. An empty segment list emits nothing (the slot
-  backfills blank — rows like Turn/Activity disappear after `/clear`).
-- Row **lead** glyphs render once before the first segment; pass the lead's true cell width —
-  `vlen` guesses wrong for some glyphs in the user's terminal font.
-- Section labels pad to `SECTION_WIDTH` (8) and render bold-italic-SOFT.
-
-### Style conventions
-
-- Colors are 256-color ANSI constants at the top of the file. `SOFT` (245) for labels/punctuation,
-  `DIM` (244) for annotations and predictions, `VAL`/`WHITE` (97) for primary values; semantic
-  colors (GREEN/YELLOW/RED, usageColor, contextColor) carry meaning — don't reuse them
-  decoratively. Each row lead has its own hue; before introducing a color, grep `c256(` to
-  confirm it's unused.
-- Glyphs are Nerd Font codepoints declared as `g*` constants with the NF name in a comment.
-  On the user's Windows font some Font Awesome glyphs render as tofu — Material Design (`nf-md-*`,
-  `0xf0xxx`) codepoints are the safer choice; comments by existing glyphs note known exceptions.
-- Comments throughout the file explain *why* (CC bugs, font quirks, API gotchas), and several
-  encode hard-won diagnoses (e.g. the API-duration laptop-sleep artifact). Preserve and imitate
-  that register; don't strip them when refactoring.
+- **Lines never exceed `bodyColumns - 1`.** `packSection` measures with `cells` (Nerd Font PUA
+  glyphs count as 2, since fonts draw them 1 or 2 wide and the layout engine counts 1) and
+  degrades per item: widest alt → narrowest → wrap → truncate with `…`. The overflow strip is
+  fitted too (`stripLabels`). A hard-wrapped row desyncs the repaint.
+- **Height stays within budget**: fullscreen → `props.maxRows`; main screen → a third of the
+  viewport rows (`maxRows` there is the whole terminal); config `maxRows` can only lower it. `plan`
+  gives every section with data one line; over budget, sections leave to a one-line overflow strip
+  of toggles in `DROP_ORDER`; the oldest open row folds before the newest; other rows yield seats
+  to the newest open row before it is cut. Nothing scrolls; nothing is unreachable.
+- **Adding a row** = a builder in `sections.ts`, an id in `ROW_IDS` and `DROP_ORDER`, the README
+  row list and table, and the configure skill.
+- Glyphs only on the `terminal` surface (desktop has no Nerd Font); semantic colours are theme
+  keys (`success`/`warning`/`error`), decorative hues `c256(n)` → hex. Before adding a hue, grep
+  `c256(` to confirm it's unused.
 
 ### Pace balance
 
 Each Limits gauge appends a signed pace balance vs the even-consumption budget line
-(`(elapsed/window)·100`, window start = `resets_at` − window length): `+N%` = quota in hand
-(green), `-N%` = burning ahead (yellow), SOFT within ±2%, shown as soon as any time has elapsed
-in the window (suppressed only for a degenerate just-reset window — matches usage-buttons'
-PaceMetric). Kept to a few chars on purpose — the user wants it terse; don't expand it into words
-("reserve"/"over pace") or give it a dedicated row.
+(`(elapsed/window)·100`, window start = `resetsAt` − window length): `+N%` = quota in hand
+(green), `-N%` = burning ahead (yellow), dim within ±2%. Kept to a few chars on purpose — the user
+wants it terse; don't expand it into words or give it a dedicated row.
 
-### Test hygiene
+### Style
 
-Test renders share the real `$TEMP/sl-*.json` caches — clean up anything you seed with fake
-data (`check.js` sandboxes `HOME`/`TEMP` for exactly this reason).
-
-## plugins/context-bar
-
-A **mod** (a plugin of function hooks, Claude Code 2.1.287+): `hooks/hooks.json` names
-`hooks/register.ts` under `modules`; `types/index.d.ts` is the `$.state` contract the validator
-holds the module to. Load the `plugin-authoring` skill before editing it — the API is the build's
-`claude-code.d.ts`, and the static validator has rules of its own: helpers that take `$` must be
-top-level function declarations (not closures inside `register`), `$` is always spelled
-`$.noun.method(...)`, and every `$.state` key must be declared in the contract. Keep
-`layout()`/`legend()` pure and exported so the tests can check the arithmetic without a drawing.
-Verify with `claude plugin validate --strict plugins/context-bar` and
-`claude plugin test plugins/context-bar` (no session needed); a real look in a terminal is still
-needed for anything visual, since the test kit checks the tree, not the paint.
+Comments explain *why* (engine quirks, font quirks, API gotchas); preserve and imitate that
+register. Verify with `claude plugin validate --strict plugins/statusline-dashboard` and
+`claude plugin test plugins/statusline-dashboard`; a real look in a terminal is still needed for
+anything visual (the test kit checks the tree, not the paint).
 
 ## plugins/session-color
 
@@ -204,9 +120,16 @@ the staged binary's subcommand (`on-submit`, `notify notification`, `notify stop
 Terminal's process tree so UI Automation works). Sources: `windows/src/main.rs` (Rust, WinRT
 toasts, `claude-focus://` / `claude-editor://` protocol handlers), `macos/Sources/main.swift`
 (Swift, UserNotifications, needs the `.app` bundle `macos/setup.sh` assembles and ad-hoc signs).
-Both locate `config.json` by walking up from the binary, which is why config, icons and webhook
-templates live in the data dir next to the staged binary. Setup scripts never touch
-`settings.json`; the Windows one owns the registry (protocol handlers HKCU, AUMID HKLM with UAC).
+User-owned files (config.json, icons/, webhook templates) live in `~/.claude/notifications/`
+(`$CLAUDE_CONFIG_DIR/notifications/` when set), NOT the data dir — `claude plugin uninstall`
+deletes `${CLAUDE_PLUGIN_DATA}`, which therefore holds only rebuildable artifacts (exe / .app,
+build/). Both binaries look there first, then fall back to walking up from their own location
+(checkout / pre-1.1 layouts); relative config paths resolve against wherever config.json was
+found. Setup scripts seed that dir and migrate anything else they find in the data dir into it.
+Setup scripts never touch `settings.json`; the Windows one owns the registry (protocol handlers
+HKCU, AUMID HKLM with UAC). No hook runs at plugin uninstall, so `--uninstall` must remove
+everything setup created outside `~/.claude/notifications/` (registry, LaunchServices, ~/Library
+state) and leave that dir alone; docs tell users to run it before `/plugin uninstall`.
 Linux is not implemented (plan: relay to the macOS/Windows notifier over SSH/WSL).
 
 ## What doesn't belong here

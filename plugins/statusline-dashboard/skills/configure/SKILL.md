@@ -1,6 +1,6 @@
 ---
 name: configure
-description: Customize the statusline-dashboard status line — show, hide, or reorder its rows and widgets, drop the row labels or gauge bars, switch the clock to 12h, cap its height, or turn off the usage-API lookup. Use when the user runs /statusline-dashboard:configure, or asks to change, trim, simplify, or customize what the dashboard shows.
+description: Customize the statusline-dashboard (the dashboard above the prompt) — show, hide, or reorder its rows and widgets, choose which rows start open, drop the row labels or gauge bars, switch the clock to 12h, cap its height, or turn off the usage-API or gh lookups. Use when the user runs /statusline-dashboard:configure, or asks to change, trim, simplify, or customize what the dashboard shows.
 argument-hint: "[what to change, e.g. \"hide the host row and the OS badge\"]"
 allowed-tools: Read, Write, Edit
 ---
@@ -8,8 +8,8 @@ allowed-tools: Read, Write, Edit
 # Configure the statusline-dashboard
 
 The dashboard reads an optional JSON file, **`~/.claude/statusline-dashboard.json`** (or the path
-in `$CLAUDE_STATUSLINE_CONFIG` when that is set). The same file applies to a plugin install and a
-checkout install, and plugin updates never touch it. Changes show on the next render; no restart.
+in `$CLAUDE_STATUSLINE_CONFIG` when that is set). Plugin updates and uninstalls never touch it.
+The dashboard re-reads it every minute and at each session start; no restart.
 
 ## Steps
 
@@ -26,12 +26,14 @@ checkout install, and plugin updates never touch it. Changes show on the next re
 | --- | --- | --- | --- |
 | `rows` | array of row ids | all, in the order below | Which rows render, in this order. |
 | `hide` | array of row or widget ids | `[]` | Drops these rows or widgets. |
-| `labels` | boolean | `true` | `false` drops the left label column, which frees 9 columns per row. |
+| `expanded` | array of row ids | `[]` | Rows open by default, until the user first opens or closes one (clicking a label, or `/dash <row>`); after that their own choice is remembered. |
+| `labels` | boolean | `true` | `false` drops the row labels, which frees 9 columns per row; the ▸/▾ toggles stay. |
 | `bars` | boolean | `true` | `false` shows every gauge as a number only, with no bar. |
 | `pace` | boolean | `true` | `false` drops the `+N%` / `-N%` pace balance from the Limits gauges. |
-| `clock` | `"24h"` or `"12h"` | `"24h"` | Format of the Host-row clock. |
-| `usageApi` | boolean | `true` | `false` never reads the OAuth token or calls the usage API, so there are no model-scoped weekly gauges and no `Cr` gauge. |
-| `maxRows` | positive integer | none | Caps the number of rows. It can only lower the built-in limit of a third of the terminal height. |
+| `clock` | `"24h"` or `"12h"` | `"24h"` | Format of the Host-row clock and the reset times. |
+| `usageApi` | boolean | `true` | `false` never calls the usage API, so there are no model-scoped weekly gauges and no `Cr` gauge. |
+| `pr` | boolean | `true` | `false` never runs `gh` for the Repo row's PR badge. |
+| `maxRows` | positive integer | none | Caps the dashboard's height. It can only lower the built-in budget. |
 
 **Row ids**, in the default order: `model`, `limits`, `usage`, `turn`, `activity`, `repo`,
 `config`, `exts`, `host`, `info`.
@@ -52,8 +54,7 @@ checkout install, and plugin updates never touch it. Changes show on the next re
   `config.scopes` (the `(m/u/p/l/x)` breakdowns)
 - `exts.lsp`, `exts.monitors`, `exts.bin`, `exts.channels`
 - `host.clock`, `host.os`, `host.user`, `host.fleet`
-- `info.cwd`, `info.style`, `info.vim`, `info.version`, `info.agent`, `info.remote`, `info.session`
-- Agent panel rows: `subagent.label`, `subagent.model`, `subagent.elapsed`, `subagent.tokens`
+- `info.cwd`, `info.style`, `info.version`, `info.agent`, `info.session`
 
 Example: a compact three-row dashboard without the Host clutter:
 
@@ -65,5 +66,5 @@ Example: a compact three-row dashboard without the Host clutter:
 }
 ```
 
-If the user hides `info.vim`, mention that Claude Code's own `-- INSERT --` indicator stays hidden
-while `statusLine.hideVimModeIndicator` is `true` in their settings.
+Opening and closing rows doesn't need the file: the user clicks a row's label, or runs
+`/dash <row>`, `/dash open all`, `/dash close all`. `/dash` alone hides or shows the whole dashboard.

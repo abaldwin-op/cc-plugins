@@ -5,19 +5,6 @@ on:
   pull_request:
 
 jobs:
-  # statusline-dashboard: renders fixture payloads across terminal sizes in a sandboxed HOME/TEMP
-  # and asserts the width / height / blank-row invariants, plus the staging hook's contract.
-  check:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: bun check.js
-
   # `claude plugin validate` reads the marketplace + each plugin's manifest, hooks file and skills
   # the way Claude Code will at install time. --strict turns warnings (reserved-looking names,
   # missing metadata, unquoted path variables in hook commands) into failures. Validating the
@@ -37,7 +24,7 @@ jobs:
             claude plugin validate --strict "$p"
           done
       # The mod's tests run against the engine's test kit: no session, sign-in or network.
-      - run: claude plugin test plugins/context-bar
+      - run: claude plugin test plugins/statusline-dashboard
       # The hook dispatchers are the one piece of shell every platform runs (Git Bash on Windows).
       - run: |
           sh -n plugins/session-color/hooks/session-color.sh

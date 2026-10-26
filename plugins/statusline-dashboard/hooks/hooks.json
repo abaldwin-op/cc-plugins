@@ -1,16 +1,4 @@
 {
-  "description": "Keeps a copy of the status line scripts in the plugin's persistent data directory, so the statusLine command configured by /statusline-dashboard:setup keeps working across plugin updates (the plugin root path changes with every version).",
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/scripts/stage.js",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
+  "description": "Mod: draws the dashboard in the band above the prompt, one collapsible row per section (see hooks/register.tsx).",
+  "modules": ["./register.tsx"]
 }

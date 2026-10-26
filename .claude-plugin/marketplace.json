@@ -1,35 +1,51 @@
 {
   "name": "cc-plugins",
-  "owner": { "name": "Anthony Baldwin", "url": "https://github.com/anthonybaldwin" },
-  "description": "Anthony Baldwin's Claude Code plugins: a multi-row status line dashboard, a context-window bar above the prompt, status-driven terminal tinting, and native desktop notifications.",
+  "owner": {
+    "name": "Anthony Baldwin",
+    "url": "https://github.com/anthonybaldwin"
+  },
+  "description": "Anthony Baldwin's Claude Code plugins: a dashboard above the prompt, status-driven terminal tinting, and native desktop notifications.",
   "plugins": [
     {
       "name": "statusline-dashboard",
       "source": "./plugins/statusline-dashboard",
-      "description": "Opinionated multi-row status line: context, cost, rate-limit windows with pace balance, git/PR, sub-agents, and config-scope breakdowns. Zero-dependency Bun scripts with Nerd Font glyphs.",
+      "description": "Mod: an opinionated dashboard above the prompt with collapsible rows — context with a per-category breakdown, rate-limit windows with pace balance, cost, activity and sub-agents, git/PR, and config-scope breakdowns. Requires Claude Code 2.1.287+.",
       "category": "productivity",
-      "tags": ["statusline", "status-line", "dashboard", "rate-limits", "context-window", "nerd-fonts"]
+      "tags": [
+        "mod",
+        "dashboard",
+        "above-prompt",
+        "rate-limits",
+        "context-window",
+        "nerd-fonts"
+      ]
     },
     {
       "name": "session-color",
       "source": "./plugins/session-color",
       "description": "Tints the terminal background by session status — amber while Claude works, red when it needs you, green when it's done — per pane, so a wall of sessions reads at a glance. macOS, Linux (tmux-aware), Windows.",
       "category": "productivity",
-      "tags": ["hooks", "terminal", "osc-11", "tmux", "session-status"]
+      "tags": [
+        "hooks",
+        "terminal",
+        "osc-11",
+        "tmux",
+        "session-status"
+      ]
     },
     {
       "name": "notifications",
       "source": "./plugins/notifications",
       "description": "Native desktop notifications when Claude finishes or needs input, with elapsed time, a button that focuses the originating terminal tab/pane, an open-in-editor button, and an optional AFK webhook (Discord, Slack, ntfy, Gotify). Windows (WinRT) and macOS (UserNotifications).",
       "category": "productivity",
-      "tags": ["hooks", "notifications", "toast", "webhook", "windows", "macos"]
-    },
-    {
-      "name": "context-bar",
-      "source": "./plugins/context-bar",
-      "description": "Mod: draws your context window as a stacked bar above the prompt, one color per category as /context breaks it down, live after every turn. /context-bar toggles it. Requires Claude Code 2.1.287+.",
-      "category": "productivity",
-      "tags": ["mod", "context-window", "context", "above-prompt"]
+      "tags": [
+        "hooks",
+        "notifications",
+        "toast",
+        "webhook",
+        "windows",
+        "macos"
+      ]
     }
   ]
 }
