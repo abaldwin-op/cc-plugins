@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 
 import { legacyKeys, parseApiUsage, parseChanged, parseGitStatus, parseLastCommit, parseRemote, parseTag } from '../hooks/collect'
 import { DROP_ORDER, ROW_IDS, bar, cells, legendLines, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, type Section } from '../hooks/layout'
-import { editLines, emptyActivity, recordTool } from '../hooks/register'
+import { editLines, emptyActivity, mergeAgents, recordTool } from '../hooks/register'
 import { buildSections, parseConfig } from '../hooks/sections'
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────────────
@@ -239,6 +239,22 @@ test('tool calls fold into the activity: todos, tasks, edit lines', () => {
   a = recordTool(a, 'mcp__linear__create_issue', {})
   expect(a.lastTool).toEqual({ name: 'linear:create_issue', target: undefined })
   expect(a.recentTools?.map((t) => t.name)).not.toContain('Agent')
+})
+
+test('the agent history outlives the engine\'s roster', () => {
+  const a1 = { id: 'a1', type: 'general-purpose', description: 'Count to 100', status: 'running' }
+  let ag = mergeAgents(emptyActivity().agents, { subs: [a1], teammates: [] })
+  expect([ag.running, ag.list?.length]).toEqual([1, 1])
+  ag = mergeAgents(ag, { subs: [{ ...a1, status: 'completed' }], teammates: [] })
+  // The roster has dropped it: still listed, still counted.
+  ag = mergeAgents(ag, { subs: [], teammates: [] })
+  expect(ag.list?.map((x) => x.status)).toEqual(['completed'])
+  expect([ag.running, ag.completed]).toEqual([0, 1])
+  // One that vanished while running is marked ended, and a new one joins after it.
+  ag = mergeAgents(ag, { subs: [{ id: 'a2', type: 'Explore', description: 'look', status: 'running' }], teammates: ['ann'] })
+  ag = mergeAgents(ag, { subs: [], teammates: [] })
+  expect(ag.list?.map((x) => `${x.id}:${x.status}`)).toEqual(['a1:completed', 'a2:ended'])
+  expect([ag.running, ag.completed, ag.teammates]).toEqual([0, 2, []])
 })
 
 test('only blocks that run this plugin\'s 1.x scripts count as legacy', () => {

@@ -144,8 +144,35 @@ async function refreshInfo($: EngineInterface): Promise<void> {
 }
 
 async function refreshAgents($: EngineInterface): Promise<void> {
-  const agents = await collectAgents($)
-  await update($, activity, (a) => ({ ...(a ?? emptyActivity()), agents }))
+  const live = await collectAgents($)
+  if (live) await update($, activity, (a) => ({ ...(a ?? emptyActivity()), agents: mergeAgents((a ?? emptyActivity()).agents, live) }))
+}
+
+const isLive = (status: string) => status === 'running' || status === 'pending' || status === 'waiting'
+
+/**
+ * Folds the engine's current roster into the session's agent history. The roster drops an agent
+ * soon after it finishes, so an agent missing from it keeps its last-seen status, and one last
+ * seen still running is marked `ended` (it finished between two looks; how, the roster no longer
+ * says). Counts come from the history, so a finished agent stays counted.
+ */
+export function mergeAgents(prev: Activity['agents'], live: { subs: Array<{ id: string; type: string; description: string; status: string }>; teammates: string[] }): Activity['agents'] {
+  const now = new Map(live.subs.map((x) => [x.id, x]))
+  const list = (prev.list ?? []).map((x) => {
+    const seen = x.id ? now.get(x.id) : undefined
+    if (seen) return seen
+    return isLive(x.status) ? { ...x, status: 'ended' } : x
+  })
+  const known = new Set(list.map((x) => x.id))
+  for (const x of live.subs) if (!known.has(x.id)) list.push(x)
+  const kept = list.slice(-20)
+  return {
+    running: kept.filter((x) => isLive(x.status)).length,
+    completed: kept.filter((x) => x.status === 'completed' || x.status === 'ended').length,
+    failed: kept.filter((x) => x.status === 'failed' || x.status === 'killed').length,
+    teammates: live.teammates,
+    list: kept,
+  }
 }
 
 // The usage API at most every five minutes, and only for a subscription session (one whose
@@ -391,6 +418,8 @@ export const register: Register = (on) => {
     if (name === 'Agent' || name === 'Task') $.clock.after(500, () => void refreshAgents($))
     const result = await next(e)
     await update($, activity, (a) => recordTool(a ?? emptyActivity(), name, input, String(result.text ?? ''), 'deny' in result || result.isError === true))
+    // A foreground agent's call returns as the agent finishes: look before the roster drops it.
+    if (name === 'Agent' || name === 'Task') await refreshAgents($)
     return result
   }).catch(($, e, next) => next(e)) // observing only: on a failure, carry on as if unhooked
 

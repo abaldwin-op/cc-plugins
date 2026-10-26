@@ -273,9 +273,13 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
   // The session's sub-agents in the order they started, newest last: what each was asked to do
   // and how it ended.
   if (a.agents.list?.length && on('activity.agents')) {
-    for (const ag of a.agents.list) {
-      const col = ag.status === 'completed' ? GOOD : ag.status === 'failed' || ag.status === 'killed' ? BAD : CYAN
-      const mark = ag.status === 'completed' ? OK : ag.status === 'failed' || ag.status === 'killed' ? NO : '●'
+    // The last five, plus any older one still running.
+    const all = a.agents.list
+    const isLive = (st: string) => st === 'running' || st === 'pending' || st === 'waiting'
+    for (const ag of all.filter((x, i) => i >= all.length - 5 || isLive(x.status))) {
+      const done = ag.status === 'completed' || ag.status === 'ended'
+      const col = done ? GOOD : ag.status === 'failed' || ag.status === 'killed' ? BAD : CYAN
+      const mark = done ? OK : ag.status === 'failed' || ag.status === 'killed' ? NO : '●'
       lines.push([v(`${mark} `, col), v(ag.type), d(`  ${ag.description}`)])
     }
   }

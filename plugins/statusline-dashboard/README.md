@@ -58,8 +58,9 @@ it's up.
     bar, one colour per category, and a legend.
   - **Turn**: the last five turns — duration, output, input and how much of it came from the cache.
   - **Activity**: the todo list around the current item, the last tool calls with what each acted
-    on (✔ answered, ✘ failed, … running; repeats collapse to `×n`), and the session's sub-agents in
-    the order they started, each with its task and how it ended.
+    on (✔ answered, ✘ failed, … running; repeats collapse to `×n`), and the session's last five
+    sub-agents in the order they started, each with its task and how it ended. The dashboard keeps
+    this history itself, because Claude Code's agent list drops an agent soon after it finishes.
   - **Repo**: the last commit and the first changed files.
 - **Height budget.** In fullscreen the dashboard takes what the bottom slot has left. On the main
   screen it takes at most a third of the terminal, so the conversation keeps its room. Over

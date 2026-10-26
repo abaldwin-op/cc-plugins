@@ -401,22 +401,16 @@ export function parseApiUsage(u: any, now: number): ApiUsage {
 
 // ── agents ───────────────────────────────────────────────────────────────────────────────────────
 
-export async function collectAgents($: $) {
+/** The agent roster as the engine has it now: sub-agents in start order, and teammate names. */
+export async function collectAgents($: $): Promise<{ subs: Array<{ id: string; type: string; description: string; status: string }>; teammates: string[] } | null> {
   try {
     const all = await $.agent.list()
-    const subs = all.filter((a) => !a.teammateId)
     return {
-      running: subs.filter((a) => a.status === 'running' || a.status === 'pending' || a.status === 'waiting').length,
-      completed: subs.filter((a) => a.status === 'completed').length,
-      failed: subs.filter((a) => a.status === 'failed' || a.status === 'killed').length,
+      subs: all.filter((a) => !a.teammateId).map((a) => ({ id: a.id, type: a.type, description: a.description, status: a.status })),
       teammates: all.filter((a) => a.teammateId).map((a) => a.name ?? a.teammateId?.split('@')[0] ?? '?'),
-      // In start order (the roster's), the last five, plus any older one still running.
-      list: subs
-        .filter((a, i) => i >= subs.length - 5 || a.status === 'running' || a.status === 'pending' || a.status === 'waiting')
-        .map((a) => ({ type: a.type, description: a.description, status: a.status })),
     }
   } catch {
-    return { running: 0, completed: 0, failed: 0, teammates: [] }
+    return null
   }
 }
 
