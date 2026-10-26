@@ -13,7 +13,8 @@
 //   install    — Merges hook config into ~/.claude/settings.json.
 //   uninstall  — Removes hooks from settings.json, cleans up temp files.
 //
-// Config: ../config.json (relative to binary). See config.json.example.
+// Config: ~/.claude/notifications/config.json (see baseDir below; falls back to walking up from
+//         the binary). See config.json.example.
 //   terminal: "ghostty" | "iterm2" | "terminal" (app to focus on click)
 //   editor:   "zed" | "code" | "cursor" (app to open project in)
 //
@@ -1052,17 +1053,44 @@ guard args.count >= 2 else {
     exit(1)
 }
 
-// baseDir = the notifications/ directory (where config.json and icons/ live)
-// Walk up from the binary looking for config.json.
-// Works from bin/, .build/, or any nested location.
+// baseDir = where config.json lives; icons/ and webhook templates resolve against it.
+//
+// 1. The user config dir: $CLAUDE_CONFIG_DIR/notifications if Claude Code's CLAUDE_CONFIG_DIR is
+//    set, else ~/.claude/notifications. It sits OUTSIDE the plugin data dir on purpose:
+//    `claude plugin uninstall` deletes ${CLAUDE_PLUGIN_DATA}, and the user's config and icons must
+//    survive that. setup.sh seeds/migrates it.
+// 2. Walk up from the binary. At each level <dir>/config.json (legacy layouts: bin/, .build/, or a
+//    pre-1.1 data dir that still holds config.json), and on passing a `plugins` dir,
+//    <its parent>/notifications/config.json — the user config dir for a bundle staged at
+//    <config dir>/plugins/data/<id>/<Title>.app, for a process that didn't inherit
+//    CLAUDE_CONFIG_DIR (the Windows protocol handlers are the case that motivated it; kept
+//    symmetric here).
+// 3. Nothing found: the binary's own dir (every field has a default).
 let exePath = (args[0] as NSString).resolvingSymlinksInPath
 let baseDir: String = {
+    let fm = FileManager.default
+    func hasConfig(_ dir: String) -> Bool {
+        fm.fileExists(atPath: (dir as NSString).appendingPathComponent("config.json"))
+    }
+    let env = ProcessInfo.processInfo.environment
+    let configRoot: String
+    if let d = env["CLAUDE_CONFIG_DIR"], !d.isEmpty {
+        configRoot = (d as NSString).expandingTildeInPath
+    } else {
+        configRoot = (fm.homeDirectoryForCurrentUser.path as NSString).appendingPathComponent(".claude")
+    }
+    let userDir = (configRoot as NSString).appendingPathComponent("notifications")
+    if hasConfig(userDir) { return userDir }
+
     var dir = (exePath as NSString).deletingLastPathComponent
     while !dir.isEmpty && dir != "/" {
-        if FileManager.default.fileExists(atPath: (dir as NSString).appendingPathComponent("config.json")) {
-            return dir
+        if hasConfig(dir) { return dir }
+        let parent = (dir as NSString).deletingLastPathComponent
+        if (dir as NSString).lastPathComponent == "plugins" {
+            let candidate = (parent as NSString).appendingPathComponent("notifications")
+            if hasConfig(candidate) { return candidate }
         }
-        dir = (dir as NSString).deletingLastPathComponent
+        dir = parent
     }
     return (exePath as NSString).deletingLastPathComponent
 }()

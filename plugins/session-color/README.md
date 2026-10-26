@@ -60,11 +60,16 @@ It builds `session-color.exe` and stages it in the plugin's persistent data dire
 
 ## Uninstall
 
+Claude Code runs no hook when a plugin is uninstalled, so reset first:
+
 ```
+/session-color:setup --uninstall
 /plugin uninstall session-color@cc-plugins
 ```
 
-removes the hooks (and, on Windows, the staged exe with the data directory). To reset a pane that's still tinted: `printf '\033]111\007'`, or `/session-color:setup --uninstall` which does that for you.
+`--uninstall` resets the current pane's tint (through the plugin's own implementation — a `printf` from Claude's Bash tool never reaches the terminal, and inside tmux the tint is a pane style OSC 111 doesn't clear) and, on Windows, removes the staged exe and its build directory. Plugin uninstall then removes the hooks and the data directory. Nothing else is left behind: no registry entries, no `settings.json` changes, no temp files.
+
+Panes of other sessions still running at uninstall stay tinted until those sessions end. To reset one by hand: `printf '\033]111\007'` typed in that pane's shell, or in tmux `tmux select-pane -t <pane> -P bg=default`.
 
 ## Customizing
 

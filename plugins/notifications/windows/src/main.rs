@@ -19,9 +19,11 @@
 //                editor with the project directory (toast "Open in Editor" button).
 //   install    — Merges hook config into ~/.claude/settings.json.
 //   uninstall  — Removes hooks from settings.json, cleans up temp files.
+//   clear-history — Removes this app's toasts from Action Center (setup.ps1 -Uninstall).
 //
-// Config: ../config.json (relative to bin/). See config.json.example.
-// Icons:  ../icons/ (gitignored). PNG for toast body, ICO for attribution bar.
+// Config: ~/.claude/notifications/config.json (see find_base_dir; falls back to walking up from
+//         the exe). See config.json.example.
+// Icons:  icons/ next to config.json. PNG for toast body, ICO for attribution bar.
 // State:  %TEMP%/claude-timer-{session_id}.txt (pipe-delimited session data)
 //         %TEMP%/claude-watcher-{session_id}.txt (watcher PID for cleanup)
 //         %TEMP%/claude-focus-trigger-{session_id} (empty file, IPC with watcher)
@@ -51,7 +53,7 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-// Application User Model ID — registered in HKLM by install.ps1.
+// Application User Model ID — registered in HKLM by setup.ps1.
 // Windows uses this to associate toasts with the app's display name and icon.
 const AUMID: &str = "ClaudeCode.Hooks";
 
@@ -95,24 +97,48 @@ struct WebhookConfig {
     payload: Option<String>,  // Path to JSON template file
 }
 
+// Where config.json (and the icons/ + webhook templates its relative paths point at) lives.
+//
+// 1. The user config dir: %CLAUDE_CONFIG_DIR%\notifications if Claude Code's CLAUDE_CONFIG_DIR is
+//    set, else %USERPROFILE%\.claude\notifications. It sits OUTSIDE the plugin data dir on purpose:
+//    `claude plugin uninstall` deletes ${CLAUDE_PLUGIN_DATA}, and the user's config and icons must
+//    survive that. setup.ps1 seeds/migrates it.
+// 2. Walk up from the exe. At each level `<dir>\config.json` (legacy layouts: a checkout's
+//    target\release, or a pre-1.1 data dir that still holds config.json), and on passing a
+//    `plugins` dir, `<its parent>\notifications\config.json` — that's the user config dir for an
+//    exe staged at <config dir>\plugins\data\<id>\. It matters for the protocol handlers: Windows
+//    launches claude-focus:// / claude-editor:// itself, so a CLAUDE_CONFIG_DIR set only in the
+//    shell that runs Claude Code never reaches them, but the staged exe's location still says where
+//    the config dir is.
+// 3. Nothing found: the exe's own dir (every field has a default).
+fn find_base_dir(exe: &Path) -> PathBuf {
+    let user_dir = match env::var("CLAUDE_CONFIG_DIR") {
+        Ok(d) if !d.is_empty() => PathBuf::from(d),
+        _ => PathBuf::from(env::var("USERPROFILE").unwrap_or_else(|_| env::var("HOME").unwrap_or_default())).join(".claude"),
+    }.join("notifications");
+    if user_dir.join("config.json").exists() { return user_dir; }
+
+    let exe_dir = exe.parent().unwrap_or(Path::new("."));
+    let mut dir = exe_dir;
+    loop {
+        if dir.join("config.json").exists() { return dir.to_path_buf(); }
+        let Some(parent) = dir.parent() else { break };
+        if dir.file_name().is_some_and(|n| n.eq_ignore_ascii_case("plugins")) {
+            let candidate = parent.join("notifications");
+            if candidate.join("config.json").exists() { return candidate; }
+        }
+        dir = parent;
+    }
+    exe_dir.to_path_buf()
+}
+
 // ═══════════════════════════════════════
 // Entry point
 // ═══════════════════════════════════════
 
 fn main() -> ExitCode {
     let exe = env::current_exe().unwrap_or_default();
-    // Find project root by walking up from exe looking for config.json.
-    // Works from both bin/ and target/release/.
-    let base_dir = {
-        let mut dir = exe.parent().unwrap_or(Path::new("."));
-        loop {
-            if dir.join("config.json").exists() { break dir.to_path_buf(); }
-            match dir.parent() {
-                Some(p) => dir = p,
-                None => break exe.parent().unwrap_or(Path::new(".")).to_path_buf(),
-            }
-        }
-    };
+    let base_dir = find_base_dir(&exe);
 
     let config: Config = fs::read_to_string(base_dir.join("config.json"))
         .ok()
@@ -121,7 +147,7 @@ fn main() -> ExitCode {
 
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: notifications <on-submit|notify|on-end|trigger|editor|install|uninstall>");
+        eprintln!("Usage: notifications <on-submit|notify|on-end|trigger|editor|install|uninstall|clear-history>");
         return ExitCode::from(1);
     }
 
@@ -133,6 +159,7 @@ fn main() -> ExitCode {
         "editor" => open_editor(args.get(2).map(|s| s.as_str()).unwrap_or(""), &config),
         "install" => install_hooks(&exe),
         "uninstall" => uninstall_hooks(),
+        "clear-history" => clear_history(),
         other => { eprintln!("Unknown: {other}"); 1 }
     };
 
@@ -377,6 +404,16 @@ fn show_toast(xml_str: &str, sid: &str) -> i32 {
     0
 }
 
+// clear-history — run by `setup.ps1 -Uninstall` before it unregisters the AUMID: once the
+// AUMID and the exe are gone, toasts still sitting in Action Center can't be attributed or
+// clicked, and nothing else would ever remove them.
+fn clear_history() -> i32 {
+    match ToastNotificationManager::History().and_then(|h| h.ClearWithId(&HSTRING::from(AUMID))) {
+        Ok(()) => 0,
+        Err(_) => 1,
+    }
+}
+
 // ═══════════════════════════════════════
 // on-end — kills watcher, cleans up temp files
 // ═══════════════════════════════════════
@@ -505,7 +542,10 @@ fn uninstall_hooks() -> i32 {
 fn trigger(uri: &str) -> i32 {
     let sid = uri.replace("claude-focus://", "");
     let sid = sid.trim_end_matches('/');
-    if sid.is_empty() { return 1; }
+    // Any page or app can launch a claude-focus:// URI, and the sid becomes part of a file path
+    // that fs::write truncates: `claude-focus://x/../../<path>` would empty an arbitrary file.
+    // Session ids are UUIDs, so accept only that alphabet.
+    if sid.is_empty() || !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { return 1; }
     let _ = fs::write(trigger_path(sid), "");
     0
 }
@@ -584,9 +624,22 @@ fn focus_terminal(wt_pid: u32, tab_rid: &str, _tab_name: &str, _pane_rid: &str) 
         ) else { return };
 
         let Ok(windows) = root.FindAll(TreeScope_Children, &pid_cond) else { return };
-        let win = (0..windows.Length().unwrap_or(0))
+        // One WindowsTerminal.exe hosts every WT window, so the pid alone doesn't pick the window:
+        // take the one that holds the captured tab, else the first.
+        let all: Vec<IUIAutomationElement> = (0..windows.Length().unwrap_or(0))
             .filter_map(|i| windows.GetElement(i).ok())
-            .next();
+            .collect();
+        let tab_cond = auto.CreatePropertyCondition(
+            UIA_ControlTypePropertyId, &VARIANT::from(UIA_TabItemControlTypeId.0),
+        ).ok();
+        let holds_tab = |w: &IUIAutomationElement| -> bool {
+            let (Some(cond), false) = (tab_cond.as_ref(), tab_rid.is_empty()) else { return false };
+            let Ok(tabs) = w.FindAll(TreeScope_Descendants, cond) else { return false };
+            (0..tabs.Length().unwrap_or(0))
+                .filter_map(|j| tabs.GetElement(j).ok())
+                .any(|t| get_runtime_id(&t) == tab_rid)
+        };
+        let win = all.iter().find(|w| holds_tab(w)).or_else(|| all.first()).cloned();
         let Some(win) = win else { return };
 
         let hwnd = HWND(win.CurrentNativeWindowHandle().unwrap_or_default().0);
@@ -609,7 +662,7 @@ fn focus_terminal(wt_pid: u32, tab_rid: &str, _tab_name: &str, _pane_rid: &str) 
             ) else { return };
             let Ok(tabs) = win.FindAll(TreeScope_Descendants, &tab_cond) else { return };
 
-            for attempt in 0..3 {
+            'retry: for attempt in 0..3 {
                 if attempt > 0 { thread::sleep(Duration::from_millis(100)); }
                 for j in 0..tabs.Length().unwrap_or(0) {
                     let Ok(tab) = tabs.GetElement(j) else { continue };
@@ -619,7 +672,7 @@ fn focus_terminal(wt_pid: u32, tab_rid: &str, _tab_name: &str, _pane_rid: &str) 
                             let _ = sip.Select();
                             thread::sleep(Duration::from_millis(50));
                             if sip.CurrentIsSelected().unwrap_or(BOOL::from(false)).as_bool() {
-                                break;
+                                break 'retry; // done — a plain break only left the tab loop
                             }
                         }
                     }
@@ -769,8 +822,20 @@ fn find_selected_tab(wt_pid: u32) -> (String, String, String) {
         ) else { return Default::default() };
 
         let Ok(windows) = root.FindAll(TreeScope_Children, &pid_cond) else { return Default::default() };
-        for i in 0..windows.Length().unwrap_or(0) {
-            let Ok(win) = windows.GetElement(i) else { continue };
+        // Every WT window has a selected tab, and one WindowsTerminal.exe hosts them all — so check
+        // the foreground window first (the user just submitted the prompt in it), else window 0's
+        // tab would be recorded no matter which window Claude runs in.
+        let fg = GetForegroundWindow();
+        let mut order: Vec<IUIAutomationElement> = (0..windows.Length().unwrap_or(0))
+            .filter_map(|i| windows.GetElement(i).ok())
+            .collect();
+        if let Some(pos) = order.iter().position(|w| {
+            w.CurrentNativeWindowHandle().map(|h| h.0 == fg.0).unwrap_or(false)
+        }) {
+            let w = order.remove(pos);
+            order.insert(0, w);
+        }
+        for win in order {
             let Ok(tabs) = win.FindAll(TreeScope_Descendants, &tab_cond) else { continue };
 
             for j in 0..tabs.Length().unwrap_or(0) {

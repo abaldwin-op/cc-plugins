@@ -1,7 +1,7 @@
 {
   "name": "notifications",
   "displayName": "Notifications",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Native desktop notifications when Claude finishes or needs input: project + elapsed time, a button that focuses the originating terminal tab/pane, open-in-editor, replace-by-session, and an optional AFK webhook (Discord, Slack, ntfy, Gotify). Windows (WinRT toasts) and macOS (UserNotifications).",
   "author": { "name": "Anthony Baldwin", "url": "https://github.com/anthonybaldwin" },
   "homepage": "https://github.com/anthonybaldwin/cc-plugins/tree/main/plugins/notifications",

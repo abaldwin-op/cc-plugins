@@ -1,235 +1,159 @@
 # statusline-dashboard
 
-A cross-platform [Claude Code](https://claude.com/claude-code) [status line](https://code.claude.com/docs/en/statusline) — context, cost,
-rate-limit windows, git, and full config-scope breakdowns — rendered as an opinionated, multi-row
-dashboard with Nerd Font glyphs. Zero-dependency [Bun](https://bun.sh) scripts, no build step.
+An opinionated [Claude Code](https://claude.com/claude-code) dashboard: context, cost,
+rate-limit windows with pace balance, activity and sub-agents, git/PR, and full config-scope
+breakdowns, drawn with Nerd Font glyphs in the band above the prompt. Every row folds to one line
+and opens to its full detail.
 
-It reads the JSON Claude Code feeds to a status-line command on stdin (model, context window,
-cost, rate limits, cwd, git/PR, vim mode, …), enriches it with cheap local reads (git, config
-files, `/etc/os-release`, etc.), and reflows everything to your terminal width.
+It's a [mod](https://code.claude.com/docs/en/plugins/mods/overview) (Claude Code **2.1.287+**):
+nothing to set up, nothing written to your settings. Install it and it draws. Uninstall it and
+it's gone.
 
-## What it shows
-
-Each row is width-aware: it packs onto one line when it fits, wraps to aligned continuation
-lines when it doesn't, and gauges drop their progress bar before anything gets truncated.
-Height adapts to your terminal, taking at most a third of it — Claude Code needs the rest for
-the conversation, prompt, and its own footer. On a tall window rows wrap freely (nothing
-truncated); as the window shortens, wrapped rows first fall back to their compact forms (no bars,
-no scope parentheticals) so every item still fits, then anything left over is cut with a trailing
-`…`, then whole rows are shed (least-essential first, the Model/Limits gauges last) so the
-dashboard never pushes Claude Code's own footer off the bottom. Within one window size the height
-only ratchets up, never down, so Claude Code's repaint never leaves ghost rows behind.
-
-- **Model** — model name (⚡ when fast mode is on), reasoning effort (styled to echo Claude
-  Code's `/effort` menu; only on models that have an effort setting) with a 💡 lamp when extended
-  thinking is on, and a context-window gauge
-  that warns early (yellow ≥50%, red ≥80%) plus a red `200K+` marker once you cross the fixed
-  200k long-context pricing line on an extended-context (>200k) model.
-- **Limits** — the `5h` and `7d` rate-limit windows with usage bars, percentages, and reset
-  times; plus any model-scoped weekly caps from the OAuth usage API's `limits` array (cached
-  with a TTL) — e.g. `7dF` for the Fable weekly allowance, which the API normalizes to its own
-  0–100% scale. Each windowed gauge carries a signed pace balance vs the even-consumption budget
-  line: `+N%` = quota in hand (green), `-N%` = burning ahead of pace (yellow). A `Cr` gauge
-  (monthly usage-credit spend, `$used/$limit`) appears only once credits actually start being
-  consumed. Behind a [Claude apps gateway](https://code.claude.com/docs/en/claude-apps-gateway-spend-limits),
-  an `Sp` gauge shows your spend-limit usage (`rate_limits.spend_limit`, Claude Code ≥ 2.1.251) —
-  it keeps counting past 100% once you're over the cap, with the period's reset date. From Claude
-  Code 2.1.284 it also shows the dollars (`$used/$limit`) and, when the gateway reports the
-  period (daily / weekly / monthly), a pace balance like the other gauges.
-- **Usage** — total session cost, `$/h` burn rate, throughput (tok/s), API time, and wall-clock.
-- **Turn** — the last call's token makeup: input / output / cache-write / cache-read; then the
-  session's prompt-cache health (`prompt_cache`, Claude Code ≥ 2.1.251): hit ratio, `warm` with
-  time left on the TTL or `cold` with what the next request will re-cache, and a yellow miss
-  count with the likely cause of the last miss (e.g. `tools changed`) when there's room.
-- **Activity** — active slash command, todo progress, last tool call, sub-agents (each running
-  agent with its own task count, plus a green ✔ tally of completed ones), your agent team's
-  teammates when this session leads one (agent teams, `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`),
-  and the session's edit volume (+added / −removed lines).
-- **Repo** — *(only inside a git repo)* project name, origin-remote identity (host-branded
-  GitHub/GitLab/Bitbucket badge + `owner`, or `owner/name` when the remote name differs from the
-  folder), worktree, branch with ahead/behind and staged/modified/untracked/conflict counts, the
-  current branch's open PR — or GitLab merge request, shown as `!N` — colored by review state
-  and clickable in terminals that support links, and the latest `v*` tag with commits-since.
-- **Config** — what's actually loaded, each broken down by Claude Code's real config scopes
-  **(managed / user / project / local / plugin)**, de-duped by precedence and gated on workspace
-  trust: instruction files (CLAUDE.md, plus AGENTS.md wherever Claude Code ≥ 2.1.277 loads it
-  natively — honoring the *Project instructions* setting), auto-memory files (this project's `~/.claude/projects/<slug>/memory/`),
-  agents, commands, skills (incl. output-styles), workflows, routines, rules, MCP servers,
-  claude.ai connectors, claude-in-chrome, hooks, plugins, themes (plugin or your own
-  `~/.claude/themes/`), and session-added dirs.
-- **Exts.** — plugin-*exclusive* component types, each shown with its count (`0` included, the
-  same as Config): LSP servers, background monitors, `bin/` executables, and message channels.
-  Counts include components declared inline in a plugin's **marketplace entry**, not just in the
-  plugin's own files (which is how the official LSP plugins ship them).
-- **Host** — local clock, OS badge with real version, `user@host`, and a fleet count of *other*
-  live Claude Code sessions on this machine (the same population as the `← N agent` count in
-  Claude Code's own footer; hidden at 0).
-- **Info.** — current directory (home-relativized, leaf preserved when long), vim mode,
-  output style, Claude Code version, agent name, a `remote` cloud marker for remote-attached
-  sessions, and the session identity: its custom/AI-generated name when one exists, with the
-  id (for `claude --resume`) in dim parens.
-
-### Reading the `(0/0/1/0/-)` scope breakdown
-
-Most Config items render as `icon total (m/u/p/l/x)` — a count, then a dim parenthetical that
-says *where* those items come from. The five slots are fixed and always in the same order, from
-broadest to narrowest scope:
-
-| Slot | Scope | Where it lives |
-| --- | --- | --- |
-| `m` | **managed** | Enterprise/org config: `managed-settings.json`, `managed-mcp.json`, or the Windows registry policy. Only non-zero on managed machines. |
-| `u` | **user** | Your `~/.claude/` (settings, agents, skills, …) and top-level `~/.claude.json` — loads in every project. |
-| `p` | **project** | Committed in the repo: `.claude/`, `.mcp.json`, `CLAUDE.md`. Shared with collaborators. |
-| `l` | **local** | Your uncommitted per-project overrides: `.claude/settings.local.json`, `CLAUDE.local.md`, `~/.claude.json` `projects[cwd]`. |
-| `x` | **plugin** | Components bundled by enabled plugins. Lowest precedence. |
-
-Each slot is one of two things:
-
-- **A number** (including `0`) — this item type *can* come from that scope, and this is how many
-  currently do. A `0` means "nothing from here right now".
-- **`-`** — this item type can *never* come from that scope, so the slot is not applicable.
-  Agents, commands, and skills have no managed or local form; rules and routines have no plugin
-  form; and so on.
-
-So `(0/0/1/0/-)` next to the CLAUDE.md icon reads: no managed memory file, none in `~/.claude/`,
-**one `CLAUDE.md` in this repo**, no `CLAUDE.local.md`, and plugins can't provide one. Likewise
-`(-/3/0/-/2)` on skills means three of your own in `~/.claude/skills/`, none in this repo, two shipped by
-plugins — and the dashes because skills have no managed or local form.
-
-Which scopes each item can have:
-
-| Item | Slots that can hold a count |
-| --- | --- |
-| CLAUDE.md, Plugins | `m` `u` `p` `l` |
-| MCP servers, Hooks | `m` `u` `p` `l` `x` |
-| Agents, Commands, Skills, Workflows | `u` `p` `x` |
-| Rules, Routines | `u` `p` |
-| Themes, Channels | `u` `x` |
-
-Items counted at a single location (auto-memory, connectors, chrome, session dirs, and the
-LSP/monitor/bin entries on **Exts.**) show a bare count with no parenthetical. Items whose total is
-`0` also skip it — an all-zero breakdown is just noise. On a narrow terminal the parenthetical is
-the first thing dropped to reclaim width; the total always stays visible.
-
-## Requirements
-
-- [**Bun**](https://bun.sh) — the script runs under `bun` (uses `Bun.stdin` / `Bun.main`).
-- A [**Nerd Font**](https://www.nerdfonts.com/) installed — all icons are Nerd Font glyphs.
-  It doesn't have to be your primary terminal font: some terminals fall back to installed fonts
-  automatically (e.g. Ghostty on macOS), while others need it listed as an explicit fallback —
-  in Windows Terminal, set the font face to e.g. `MonoLisa, SymbolsNerdFont`. Patching your
-  existing font with the Nerd Fonts patcher is also an option. Without a Nerd Font anywhere in
-  the chain, icons render as tofu boxes (the text still works).
-- A terminal with **truecolor (24-bit)** support for the smoothest effort-level gradients
-  (256-color still looks fine).
+```
+▸ Model    󰚩 Opus 4.7 |  xhigh 󰛨 |  ████       40% 80K/200K
+▸ Limits   󰊚 5h ████▎      42% 15:00 +18% | 7d █▎         13% Tue 09:00 +16%
+▸ Usage     $1.50 |  ~$1.50/h |  44 tok/s |  API 12m |  1h
+▾ Repo      cc-plugins | 󰊤 anthonybaldwin |  main ↑2 +1 ~3 ?1 |  #12 ● |  v1.2.0+3
+▸ Info.     ~/src/cc-plugins |  v2.1.310 |  abcd1234
++ Turn Activity Config Exts. Host
+```
 
 ## Install
-
-### As a plugin (recommended)
-
-This plugin ships in the [cc-plugins](../../) marketplace.
-In Claude Code:
 
 ```
 /plugin marketplace add anthonybaldwin/cc-plugins
 /plugin install statusline-dashboard@cc-plugins
-/statusline-dashboard:setup
 ```
 
-Claude Code can't let a plugin set `statusLine` directly, so the last step runs the plugin's
-installer, which writes the `statusLine` and `subagentStatusLine` blocks into
-`~/.claude/settings.json` for you (backing it up first and preserving your other keys). Restart
-Claude Code to see it.
+**Coming from 1.x?** 1.x was a `statusLine` script wired into `~/.claude/settings.json`. Run
+`/dash cleanup` once: it removes that block (it backs up `settings.json` to `settings.json.bak`
+first), so you don't get two dashboards. **Coming from context-bar?** It's now the Model row's open
+view. Run `/plugin uninstall context-bar@cc-plugins`.
 
-The installer points settings at copies of the scripts in the plugin's persistent data directory
-(`~/.claude/plugins/data/…`), not at the plugin itself: a plugin's install path changes with every
-version, while the data directory is stable. A `SessionStart` hook in the plugin keeps those
-copies current, so `/plugin update` flows through on the next session with no re-setup. To remove
-it later, run `/statusline-dashboard:setup --uninstall` (`--print` previews either way). To change
-what it shows, run `/statusline-dashboard:configure` (see [Configuration](#configuration)).
+## Use
 
-### From a checkout
+| | |
+| --- | --- |
+| Click a row label (fullscreen), or `ctrl+x tab` then Tab and Enter | Open or close that row |
+| `/dash` | Show or hide the whole dashboard. Your choice is remembered across sessions. |
+| `/dash <row>` | Open or close one row (`/dash config`) |
+| `/dash open all` · `/dash close all` | Open or close every row |
+| `/dash cleanup` | Remove the 1.x `statusLine` / `subagentStatusLine` blocks from `settings.json` |
+| `ctrl+x ctrl+a` | Claude Code's own collapse for the band above the prompt |
 
-Clone it anywhere you like and run the installer — the same script, pointed at the checkout
-instead of the plugin data directory. Handy for hacking on it, since edits take effect on the
-next render:
+The band is shared with other mods and with Claude Code's surveys. A survey takes precedence while
+it's up.
 
-```bash
-git clone https://github.com/anthonybaldwin/cc-plugins.git
-cd cc-plugins/plugins/statusline-dashboard
-bun install.js              # add --print to preview the changes without writing
-bun install.js --uninstall  # later: remove the blocks that point at this checkout
-```
+### How it fits the terminal
 
-It's a Bun script (Bun is required to run the status line anyway), so it works the same on
-Windows, macOS, and Linux. `--uninstall` is the mirror image: it clears only blocks that point at
-this checkout (a status line configured elsewhere is left alone) and takes the same `.bak` backup
-first.
+- **Closed rows** are one line each. Items take their compact form (no bars, no scope
+  parentheses) and are cut with `…` when even that won't fit.
+- **Open rows** show everything. Items wrap to aligned continuation lines, gauges keep their
+  bars, and Config keeps its `(m/u/p/l/x)` breakdowns. The Model row adds the context window
+  broken down by category, as `/context` shows it: a stacked bar, one color per category, and a
+  legend.
+- **Height budget.** In fullscreen the dashboard takes what the bottom slot has left. On the main
+  screen it takes at most a third of the terminal, so the conversation keeps its room. Over
+  budget, in this order:
+  1. The oldest open row folds back to one line (`▹`). The row you opened last wins.
+  2. The least essential rows move into a one-line strip of toggles (`+ Turn Activity …`). They
+     stay one click away.
+  3. Only then is the open row cut short.
+- **Width.** No line is ever wider than the band. A terminal hard-wrap would desync Claude Code's
+  repaint, so Nerd Font glyphs are measured as two cells (fonts draw them one or two wide).
+- A row with nothing to show takes no space, for example Activity after `/clear`, or Repo outside
+  a git repository.
 
-### Manual setup
+## What it shows
 
-Prefer to wire it up by hand? Add a `statusLine` block to `~/.claude/settings.json`
-(adjust the path to wherever you cloned it):
+- **Model**: the model (⚡ when fast mode is on), the reasoning effort of the last model request
+  (styled to echo Claude Code's `/effort` menu) with a lamp when extended thinking is on, and the
+  context gauge. The gauge warns early: yellow from 50%, red from 80%. **Open** for the
+  per-category breakdown.
+- **Limits**: the `5h` and `7d` windows with bars, percentages, reset times and a signed **pace
+  balance** against even consumption. `+N%` (green) is quota in hand, `-N%` (yellow) is burning
+  ahead, and it's dim within ±2%. It also shows model-scoped weekly caps from the OAuth usage API
+  (`7dF` for the Fable weekly allowance, on its own 0–100% scale). A `Cr` gauge appears once
+  usage credits start being spent, and `Sp` appears behind a Claude apps gateway spend limit.
+- **Usage**: session cost, `$/h` burn rate, throughput (tok/s over the time the model was actually
+  streaming), API time, and wall-clock.
+- **Turn**: the last call's token makeup (input / output / cache write / cache read) and the
+  session's prompt-cache hit ratio.
+- **Activity**: the active slash command, todo or task progress, the last tool call (yellow while
+  it runs) with a call count, sub-agents (running, a green ✔ tally of finished ones, a red ✘ for
+  failed ones), agent-team teammates, and the session's edit volume (+added / −removed lines).
+- **Repo** (inside a git repository only): project name, origin owner with a GitHub / GitLab /
+  Bitbucket badge, worktree, branch with ahead/behind and staged / modified / untracked /
+  conflict counts, and the latest `v*` tag with commits since. With an authed
+  [`gh`](https://cli.github.com/), the branch's open PR also shows, colored by review state and
+  clickable. `gh` runs at most every five minutes per branch.
+- **Config**: what's loaded, each item broken down by scope (see below): instruction files
+  (CLAUDE.md / AGENTS.md), auto-memory files, agents, commands, skills, workflows, routines,
+  rules, MCP servers, claude.ai connectors, claude-in-chrome, hooks, plugins, themes, and added
+  directories.
+- **Exts.**: plugin-only component types: LSP servers, background monitors, `bin/` executables,
+  and message channels.
+- **Host**: clock, OS and version, `user@host`, and how many *other* Claude Code sessions are live
+  on this machine.
+- **Info.**: current directory (leaf kept when long), output style, Claude Code version, agent
+  name, and the session id.
 
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "bun \"/path/to/cc-plugins/plugins/statusline-dashboard/statusline.js\"",
-    "hideVimModeIndicator": true,
-    "padding": 0,
-    "refreshInterval": 60
-  }
-}
-```
+Instruction files, agents, skills, MCP servers and the sub-agent roster come straight from
+Claude Code: what is actually loaded, with trust and precedence applied. The rest is counted from
+disk and gated on workspace trust the same way Claude Code gates loading.
 
-- `hideVimModeIndicator: true` — the status line renders vim mode itself, so this suppresses
-  Claude Code's native `-- INSERT --` (avoids showing it twice).
-- `padding` / `refreshInterval` — passed through by Claude Code; the script reads `padding` so
-  wide rows don't overflow, and `refreshInterval: 60` keeps the clock current.
+### Reading the `(0/1/1/0/-)` scope breakdown
 
-That's it — no separate install step and nothing to copy into `~/.claude`. The script reads
-everything it needs (settings, transcript, project config) from their normal locations.
+`icon total (m/u/p/l/x)` is a count followed by where those items come from. The slots are fixed,
+broadest to narrowest:
 
-## Subagent status line
+| Slot | Scope | Where it lives |
+| --- | --- | --- |
+| `m` | **managed** | Enterprise/org policy: `managed-settings.json`, `managed-mcp.json`, the Windows registry policy. |
+| `u` | **user** | `~/.claude/` and `~/.claude.json`. Loads in every project. |
+| `p` | **project** | Committed in the repo: `.claude/`, `.mcp.json`, `CLAUDE.md`. |
+| `l` | **local** | Your uncommitted overrides: `.claude/settings.local.json`, `CLAUDE.local.md`, `~/.claude.json` `projects[…]`. |
+| `x` | **plugin** | Bundled by enabled plugins. |
 
-`subagent-statusline.js` implements Claude Code's
-[`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines) setting —
-the per-subagent row in the agent panel below the prompt. It renders each row as
-`name · progress · model effort · ● elapsed · NNk tok`, colored by status (running / idle /
-completed / error / stopped) and clamped to the row width, matching the main dashboard. The
-progress text is the agent's live summary of what it's doing, falling back to its description.
-Agent-team teammates get a team icon instead of the robot. Wire it up alongside `statusLine`:
+A number (`0` included) means the item can come from that scope, and that many currently do. A
+`-` means it never can. The parentheses appear only when the total is above 0.
 
-```json
-{
-  "subagentStatusLine": {
-    "type": "command",
-    "command": "bun \"/path/to/cc-plugins/plugins/statusline-dashboard/subagent-statusline.js\""
-  }
-}
-```
+| Item | Slots that can hold a count |
+| --- | --- |
+| Instruction files, Plugins | `m` `u` `p` `l` |
+| MCP servers, Hooks | `m` `u` `p` `l` `x` |
+| Agents, Skills | `m` `u` `p` `x` |
+| Commands, Workflows | `u` `p` `x` |
+| Rules, Routines | `u` `p` |
+| Themes, Channels | `u` `x` |
+
+## Requirements
+
+- Claude Code **2.1.287+** (mods). The dashboard draws in the terminal and in the Desktop app's
+  Code tab. The VS Code chat panel and `claude -p` run the hooks but draw nothing.
+- A [**Nerd Font**](https://www.nerdfonts.com/) for the icons in the terminal. It doesn't have to
+  be your primary font: Ghostty falls back to installed fonts automatically, and in Windows
+  Terminal you can set the font face to e.g. `MonoLisa, SymbolsNerdFont`. The Desktop app draws no
+  icons.
+- Optional: `git` for the Repo row, and an authed `gh` for its PR badge.
 
 ## Configuration
 
-Everything is optional. With no configuration you get the full dashboard described above.
-
-### Choosing what it shows
-
-Create `~/.claude/statusline-dashboard.json`, or let Claude do it: run
-`/statusline-dashboard:configure` and describe what you want (for example *"hide the host row and
-the tok/s widget"*). The file is shared by plugin and checkout installs, and updates never
-overwrite it. Changes show on the next render.
+Everything is optional. Create `~/.claude/statusline-dashboard.json`, or run
+`/statusline-dashboard:configure` and describe what you want. Changes apply within a minute.
+The file lives outside the plugin, so updates and uninstalls never touch it.
 
 ```json
 {
   "rows": ["model", "limits", "usage", "repo", "info"],
   "hide": ["host.os", "usage.api", "config.scopes"],
+  "expanded": ["limits"],
   "labels": false,
   "bars": true,
   "pace": true,
   "clock": "12h",
   "usageApi": true,
+  "pr": true,
   "maxRows": 6
 }
 ```
@@ -238,12 +162,14 @@ overwrite it. Changes show on the next render.
 | --- | --- | --- |
 | `rows` | all rows | Which rows render, and in what order: `model`, `limits`, `usage`, `turn`, `activity`, `repo`, `config`, `exts`, `host`, `info`. |
 | `hide` | `[]` | Row ids or individual widget ids to drop (listed below). |
-| `labels` | `true` | `false` drops the left label column, which frees 9 columns on every row. |
+| `expanded` | `[]` | Rows open by default, until you first open or close one yourself. |
+| `labels` | `true` | `false` drops the row labels. The ▸/▾ toggles stay. |
 | `bars` | `true` | `false` renders every gauge as a number only. |
-| `pace` | `true` | `false` drops the `+N%` / `-N%` pace balance from the Limits gauges. |
-| `clock` | `"24h"` | `"12h"` for a 12-hour Host clock. |
-| `usageApi` | `true` | `false` never reads your OAuth token or calls the usage API: no model-scoped weekly gauges and no `Cr` gauge. |
-| `maxRows` | none | Caps the number of rows. It can only lower the built-in limit of a third of the terminal height. |
+| `pace` | `true` | `false` drops the `+N%` / `-N%` pace balance. |
+| `clock` | `"24h"` | `"12h"` for a 12-hour clock and reset times. |
+| `usageApi` | `true` | `false` never calls the usage API: no model-scoped weekly gauges and no `Cr` gauge. |
+| `pr` | `true` | `false` never runs `gh` for the Repo row's PR badge. |
+| `maxRows` | none | Caps the dashboard's height. It can only lower the built-in budget. |
 
 Widget ids for `hide`:
 
@@ -258,71 +184,35 @@ Widget ids for `hide`:
 | Config | `config.instructions` `config.memory` `config.agents` `config.commands` `config.skills` `config.workflows` `config.routines` `config.rules` `config.mcp` `config.connectors` `config.chrome` `config.hooks` `config.plugins` `config.themes` `config.dirs` `config.scopes` |
 | Exts. | `exts.lsp` `exts.monitors` `exts.bin` `exts.channels` |
 | Host | `host.clock` `host.os` `host.user` `host.fleet` |
-| Info. | `info.cwd` `info.style` `info.vim` `info.version` `info.agent` `info.remote` `info.session` |
-| Agent panel | `subagent.label` `subagent.model` `subagent.elapsed` `subagent.tokens` |
+| Info. | `info.cwd` `info.style` `info.version` `info.agent` `info.session` |
 
-Unknown keys and ids are ignored, and a file that isn't valid JSON falls back to the defaults, so a
-typo never blanks the status line.
+Unknown keys and ids are ignored. A file that isn't valid JSON falls back to the defaults, so a
+typo never blanks the dashboard. `CLAUDE_STATUSLINE_CONFIG` points it at a different file.
 
-### Environment variables
+## Uninstall
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CLAUDE_STATUSLINE_CONFIG` | `~/.claude/statusline-dashboard.json` | Use a different config file. |
-| `CLAUDE_STATUSLINE_TRANSCRIPT_BYTES` | `1048576` (1 MiB) | How many trailing bytes of the transcript to parse per render. |
-| `CLAUDE_STATUSLINE_MANAGED_DIR` | platform default | Override the enterprise/managed config dir (for testing/relocation). |
-| `CLAUDE_CODE_DISABLE_AUTO_MEMORY` | unset | Claude Code's own switch; when `1` the Config row's auto-memory count reads `0`, matching what actually loads. |
+`/plugin uninstall statusline-dashboard@cc-plugins`. Nothing is left behind except your
+`~/.claude/statusline-dashboard.json`, which is kept on purpose for a reinstall. Delete it if you
+don't want it.
 
-It also honors a few `~/.claude/settings.json` keys when present: `autoMemoryEnabled` /
-`autoMemoryDirectory` (any scope), and the `statusLine.padding` / `statusLine.refreshInterval`
-shown above.
+## How it works
 
-### Going further
+`hooks/register.tsx` collects into `$.state` from Claude Code's events. The render hook for the
+band above the prompt only reads that state, so each update redraws just the band, and nothing
+ever blocks a render on git, the disk or the network.
 
-It's a single readable file — the top of `statusline.js` defines every color and Nerd Font
-glyph as a named constant, so swapping an icon or recoloring a widget is a one-line change in a
-checkout install. The inline comments explain *why* each threshold, scope rule, and color was
-chosen.
+| Event | What it refreshes |
+| --- | --- |
+| `session.start`, `/clear`, `/resume`, compaction | Everything. The slow parts run off the event, so the first prompt never waits. |
+| `session.measure` (after each turn, when a rate-limit window moves) | Usage, plus the context breakdown when it changed |
+| `turn.step` (each model request) | Effort level and API time |
+| `turn.complete` | Tokens, cache ratio, then git and the config counts |
+| `tool.call` | Activity: last tool, todos and tasks, edit lines |
+| Every minute | Clock, countdowns, pace, other sessions, git, the usage API (at most every 5 minutes) |
 
-## Development
+The usage API call uses `$.session.authorize()`: Claude Code attaches your credential to the
+request itself, so the token never reaches the mod.
 
-Layout: the repo root is the marketplace (`.claude-plugin/marketplace.json`), and
-`plugins/statusline-dashboard/` is the plugin — the two scripts, `install.js`, the
-`SessionStart` staging hook (`hooks/`, `scripts/stage.js`) and the `setup` and `configure` skills. `check.js` and
-CI live at the root.
-
-`check.js` is the safety net for the rendering invariants that matter to your terminal (no line
-wider than the window, height capped at a third of it and never shrinking between renders, no
-whitespace-led or empty rows). It feeds fixture payloads to both scripts across a grid of
-terminal sizes, inside a sandboxed `HOME`/`TEMP` so nothing it does touches your real config or
-the live caches, and fails on the first violation. It also exercises the staging hook's contract
-(silent, exit 0, byte-exact copies, no rewrites on a repeat run). CI runs it on Linux, macOS,
-and Windows, and runs `claude plugin validate --strict` on the marketplace and the plugin.
-
-```bash
-bun check.js                # assert the invariants
-bun check.js --show 60x24   # …and print one stripped render at that size to eyeball
-claude plugin validate --strict .                               # marketplace
-claude plugin validate --strict plugins/statusline-dashboard    # plugin
-```
-
-For a quick look at a specific payload, pipe JSON straight in — Claude Code exports `COLUMNS`
-and `LINES`, so set them to the size you want to preview:
-
-```bash
-echo '{"session_id":"x","model":{"display_name":"Opus"},"cwd":"'"$PWD"'","cost":{},
-  "context_window":{"context_window_size":200000,"current_usage":{"input_tokens":50000}}}' \
-  | COLUMNS=120 LINES=40 bun plugins/statusline-dashboard/statusline.js
-```
-
-To try a local checkout as the installed plugin (loads in place, no copy, edits apply on the next
-session), add the checkout as a local marketplace:
-`/plugin marketplace add /path/to/cc-plugins`, then install as above.
-
-Ship a change to plugin users by bumping `version` in `plugins/statusline-dashboard/.claude-plugin/plugin.json`:
-Claude Code treats the manifest version as the plugin's version, so a push without a bump doesn't
-reach installed copies.
-
-## License
-
-[MIT](LICENSE) © Anthony Baldwin
+Tests: `claude plugin test plugins/statusline-dashboard` covers the layout arithmetic (width,
+height budget, the breakdown bar), the parsers, the activity bookkeeping, drawing on both
+surfaces, toggling rows, `/dash`, the user config, and the 1.x cleanup.

@@ -1,7 +1,7 @@
 {
   "name": "session-color",
   "displayName": "Session Color",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Tints the terminal background by Claude Code session status — amber while working, red when Claude needs you, green when done — per pane via OSC 11 (tmux-native on Linux). macOS, Linux, Windows.",
   "author": { "name": "Anthony Baldwin", "url": "https://github.com/anthonybaldwin" },
   "homepage": "https://github.com/anthonybaldwin/cc-plugins/tree/main/plugins/session-color",
