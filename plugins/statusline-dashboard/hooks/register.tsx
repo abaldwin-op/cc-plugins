@@ -33,7 +33,7 @@ import {
   readJson,
   removeLegacy,
 } from './collect'
-import { ROW_IDS, SECTION_WIDTH, contextDetail, plan, stripLabels, type Line, type RowId, type Run } from './layout'
+import { ROW_IDS, SECTION_WIDTH, legendLines, plan, stackRuns, stripLabels, type Line, type RowId, type Run } from './layout'
 import { buildSections, parseConfig } from './sections'
 
 const usage = atom({ plugin: 'statusline-dashboard', key: 'usage' } as const, null)
@@ -224,16 +224,18 @@ const normStatus = (s: unknown) => {
 }
 
 /** Folds one main-loop tool call (its input, and its result text once answered) into the activity. */
-export function recordTool(a: Activity, name: string, input: Record<string, unknown>, resultText?: string): Activity {
-  const next: Activity = { ...a, tasks: { ...a.tasks } }
+export function recordTool(a: Activity, name: string, input: Record<string, unknown>, resultText?: string, isError = false): Activity {
+  const next: Activity = { ...a, tasks: { ...a.tasks }, recentTools: [...(a.recentTools ?? [])] }
   if (resultText === undefined) {
     next.toolCalls += 1
     next.running += 1
     next.lastTool = { name, target: toolTarget(name, input) }
+    next.recentTools = [...(next.recentTools ?? []), { name, target: toolTarget(name, input) }].slice(-5)
     if (name === 'TodoWrite' && Array.isArray(input.todos)) {
       const todos = input.todos as Array<{ status?: string; content?: string }>
       const current = todos.find((t) => normStatus(t.status) === 'in_progress') ?? todos.find((t) => normStatus(t.status) === 'pending')
       next.todos = { completed: todos.filter((t) => normStatus(t.status) === 'completed').length, total: todos.length, current: current?.content }
+      next.todoItems = todos.map((t) => ({ subject: String(t.content ?? ''), status: normStatus(t.status) }))
     }
     if (name === 'Edit') {
       const d = editLines(String(input.old_string ?? ''), String(input.new_string ?? ''))
@@ -251,6 +253,15 @@ export function recordTool(a: Activity, name: string, input: Record<string, unkn
     return next
   }
   next.running = Math.max(0, next.running - 1)
+  // Mark the newest unanswered call of this tool answered.
+  const tools = next.recentTools ?? []
+  for (let i = tools.length - 1; i >= 0; i--) {
+    const t = tools[i]
+    if (t && t.name === name && t.ok === undefined) {
+      tools[i] = { ...t, ok: !isError }
+      break
+    }
+  }
   // TaskCreate answers "Task #N created …"; TaskUpdate names the task it changes.
   if (name === 'TaskCreate' && typeof input.subject === 'string') {
     const id = resultText.match(/#(\d+)/)?.[1] ?? String(Object.keys(next.tasks).length + 1)
@@ -332,6 +343,10 @@ export const register: Register = (on) => {
             cacheRead: x.cacheRead + u.cache_read_input_tokens,
             inputTotal: x.inputTotal + u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens,
             command: undefined,
+            turns: [
+              ...(x.turns ?? []),
+              { ms: e.durationMs, output: u.output_tokens, input: u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens, cacheRead: u.cache_read_input_tokens },
+            ].slice(-5),
           }
         })
       }
@@ -358,7 +373,7 @@ export const register: Register = (on) => {
     await update($, activity, (a) => recordTool(a ?? emptyActivity(), name, input))
     if (name === 'Agent' || name === 'Task') $.clock.after(500, () => void refreshAgents($))
     const result = await next(e)
-    await update($, activity, (a) => recordTool(a ?? emptyActivity(), name, input, String(result.text ?? '')))
+    await update($, activity, (a) => recordTool(a ?? emptyActivity(), name, input, String(result.text ?? ''), 'deny' in result || result.isError === true))
     return result
   }).catch(($, e, next) => next(e)) // observing only: on a failure, carry on as if unhooked
 
@@ -428,10 +443,13 @@ export const register: Register = (on) => {
     const room = vp?.isFullscreen === false ? Math.floor(vp.rows / 3) : e.props.maxRows
     const budget = Math.max(1, Math.min(room, e.props.maxRows, cfg.maxRows))
 
-    const sections = buildSections(inputs, cfg, glyphs)
+    const sections = buildSections(inputs, cfg, glyphs, width - indent)
     const b = inputs.breakdown
     const modelRow = sections.find((s) => s.id === 'model')
-    if (modelRow && b && !cfg.hide.has('model.context')) modelRow.detail = contextDetail(b.categories, b.maxTokens, width - indent)
+    if (modelRow && b && !cfg.hide.has('model.context')) {
+      const room = width - indent
+      modelRow.detail = [stackRuns(b.categories, room), ...legendLines(b.categories, b.maxTokens, room)]
+    }
     const laid = plan(sections, v.expanded, budget, width, indent)
     if (!laid.rows.length) return next(e)
 
@@ -444,27 +462,35 @@ export const register: Register = (on) => {
           {r.t}
         </Text>
       )
-    const line = (l: Line, head: Run[] | null, id: RowId, k: number) => (
+    const runs = (rs: Run[]) =>
+      rs.map((r, i) => (
+        <Text key={String(i)} color={r.c} bold={r.b} italic={r.i} dimColor={r.d}>
+          {r.t}
+        </Text>
+      ))
+    // The head is a Button only when the row has more to show than its closed line; a row that is
+    // already whole gets its label with no arrow and nothing to press.
+    const line = (l: Line, head: Run[] | null, canToggle: boolean, id: RowId, k: number) => (
       <Box key={`${id}:${k}`} flexDirection="row">
-        {head ? (
+        {!head ? (
+          <Text>{' '.repeat(indent)}</Text>
+        ) : canToggle ? (
           <Button key={`row:${id}`} plain onPress={() => void toggleRow($, id)}>
-            {head.map((r, i) => (
-              <Text key={String(i)} color={r.c} bold={r.b} italic={r.i} dimColor={r.d}>
-                {r.t}
-              </Text>
-            ))}
+            {runs(head)}
           </Button>
         ) : (
-          <Text>{' '.repeat(indent)}</Text>
+          <Box key={`head:${id}`} flexDirection="row">
+            {runs(head)}
+          </Box>
         )}
         {l.runs.map(runText)}
       </Box>
     )
     const rows = laid.rows.flatMap((r) => {
-      // ▾ open · ▸ closed · ▹ open but folded to one line because the band ran out of rows
-      const arrow = r.state === 'open' ? '▾ ' : r.state === 'folded' ? '▹ ' : '▸ '
-      const head: Run[] = [{ t: arrow, d: true }, ...(cfg.labels ? [{ t: r.label.padEnd(SECTION_WIDTH) + ' ', b: true, i: true, d: true }] : [])]
-      return r.lines.map((l, k) => line(l, l.isHead ? head : null, r.id, k))
+      // ▾ open · ▸ closed, more inside · ▹ open but folded to one line for room · none: nothing more
+      const arrow = !r.canToggle ? '  ' : r.state === 'open' ? '▾ ' : r.state === 'folded' ? '▹ ' : '▸ '
+      const head: Run[] = [{ t: arrow, c: 'suggestion' }, ...(cfg.labels ? [{ t: r.label.padEnd(SECTION_WIDTH) + ' ', b: true, i: true, d: true }] : [])]
+      return r.lines.map((l, k) => line(l, l.isHead ? head : null, r.canToggle, r.id, k))
     })
     if (laid.overflow.length) {
       const labels = stripLabels(laid.overflow.map((o) => o.label), width)

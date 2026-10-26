@@ -23,6 +23,7 @@ import {
   pace,
   shortenPath,
   truncate,
+  truncateRuns,
   usageColor,
   type Item,
   type RowId,
@@ -176,7 +177,11 @@ const pair = (wide: Run[], narrow: Run[]): Item => ({ wide, narrow })
 const v = (t: string, c?: string): Run => ({ t, c })
 const d = (t: string): Run => ({ t, d: true })
 
-export function buildSections(x: Inputs, cfg: Config, glyphs: boolean): Section[] {
+/**
+ * Builds every row. `room` is the cells an open row's detail lines get (past the toggle and
+ * label); each detail line is cut to it.
+ */
+export function buildSections(x: Inputs, cfg: Config, glyphs: boolean, room = 80): Section[] {
   const on = (id: string) => !cfg.hide.has(id)
   const icon: Icon = (glyph, color) => (glyphs ? [{ t: glyph, c: color }, { t: ' ' }] : [])
   const build: Record<RowId, () => Section> = {
@@ -191,7 +196,94 @@ export function buildSections(x: Inputs, cfg: Config, glyphs: boolean): Section[
     host: () => hostRow(x, cfg, on, icon),
     info: () => infoRow(x, on, icon),
   }
-  return cfg.rows.map((id) => build[id]())
+  const details: Partial<Record<RowId, () => Run[][]>> = {
+    turn: () => turnDetail(x, on),
+    activity: () => activityDetail(x, on),
+    repo: () => repoDetail(x, on),
+  }
+  return cfg.rows.map((id) => {
+    const s = build[id]()
+    const extra = s.items.length ? details[id]?.() ?? [] : []
+    return extra.length ? { ...s, detail: extra.map((l) => truncateRuns(l, room)) } : s
+  })
+}
+
+// ── open-row detail: the history a closed row has no room for ──────────────────────────────────
+
+const ago = (ms: number) => (ms < 60e3 ? 'now' : `${formatDuration(ms)} ago`)
+
+// The last few turns, newest last: how long, what went out, how much came from the cache.
+function turnDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
+  const turns = x.activity?.turns ?? []
+  if (!turns.length || !on('turn.history')) return []
+  return turns.map((t, i) => {
+    const hit = t.input > 0 ? Math.round((t.cacheRead / t.input) * 100) : 0
+    return [
+      d(i === turns.length - 1 ? 'last ' : `-${turns.length - 1 - i}   `),
+      v(`${Math.max(1, Math.round(t.ms / 1000))}s`),
+      d('  out '),
+      v(formatTokens(t.output)),
+      d('  in '),
+      v(formatTokens(t.input)),
+      d('  '),
+      v(`${hit}%`, hit >= 80 ? GOOD : hit < 50 ? WARN : undefined),
+      d(' cached'),
+    ]
+  })
+}
+
+const TODO_MARK: Record<string, [string, string | undefined]> = {
+  completed: [OK, GOOD],
+  in_progress: ['▸', WARN],
+  pending: ['○', undefined],
+}
+
+// The todo list, the last few tool calls (✔ answered, ✘ failed, … running), and the sub-agents.
+function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
+  const a = x.activity
+  if (!a) return []
+  const lines: Run[][] = []
+  const tasks = Object.values(a.tasks)
+  const todos = tasks.length ? tasks : a.todoItems ?? []
+  if (todos.length && on('activity.todo')) {
+    // Around the current item: the last done, the current, and what comes next.
+    const cur = Math.max(0, todos.findIndex((t) => t.status !== 'completed'))
+    const from = Math.max(0, Math.min(cur - 1, todos.length - 4))
+    for (const t of todos.slice(from, from + 4)) {
+      const [mark, col] = TODO_MARK[t.status] ?? ['○', undefined]
+      lines.push([v(`${mark} `, col), t.status === 'completed' ? d(t.subject) : v(t.subject)])
+    }
+  }
+  if (a.recentTools?.length && on('activity.tool')) {
+    const calls = a.recentTools.map((t): Run[] => [
+      v(t.target ? `${t.name}(${truncate(t.target, 24)})` : t.name),
+      t.ok === undefined ? v(' …', WARN) : t.ok ? v(` ${OK}`, GOOD) : v(` ${NO}`, BAD),
+    ])
+    lines.push(calls.flatMap((c, i) => (i ? [d('  '), ...c] : c)))
+  }
+  if (a.agents.list?.length && on('activity.agents')) {
+    for (const ag of a.agents.list) {
+      const col = ag.status === 'completed' ? GOOD : ag.status === 'failed' || ag.status === 'killed' ? BAD : CYAN
+      const mark = ag.status === 'completed' ? OK : ag.status === 'failed' || ag.status === 'killed' ? NO : '●'
+      lines.push([v(`${mark} `, col), v(ag.type), d(`  ${ag.description}`)])
+    }
+  }
+  return lines
+}
+
+// The last commit and the first changed paths, coloured like the branch counts.
+function repoDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
+  const r = x.repo
+  if (!r || !on('repo.files')) return []
+  const lines: Run[][] = []
+  if (r.lastCommit) lines.push([v(r.lastCommit.sha, MAGENTA), v(` ${r.lastCommit.subject}`), d(`  ${ago(x.now - r.lastCommit.at)}`)])
+  for (const f of r.files ?? []) {
+    const [mark, col] = f.xy === '??' ? ['?', BBLUE] : f.xy.includes('U') ? ['!', BAD] : f.xy[0] !== '.' ? ['+', GOOD] : ['~', WARN]
+    lines.push([v(`${mark} `, col), v(f.path)])
+  }
+  const more = (r.changedTotal ?? 0) - (r.files?.length ?? 0)
+  if (more > 0) lines.push([d(`… ${more} more`)])
+  return lines
 }
 
 // ── Model ────────────────────────────────────────────────────────────────────────────────────────

@@ -197,6 +197,8 @@ export type PlannedRow = {
   label: string
   /** Open as the person asked, or folded because the band had no room (shown dim). */
   state: 'open' | 'closed' | 'folded'
+  /** Opening it shows more than its closed line: only then does it get a ▸/▾ toggle. */
+  canToggle: boolean
   lines: Line[]
 }
 
@@ -264,10 +266,13 @@ export function plan(sections: Section[], expanded: readonly string[], budget: n
     shown = shown.filter((s) => s !== victim)
     overflow = [...overflow, victim].sort((a, b) => live.indexOf(a) - live.indexOf(b))
   }
+  // A row whose full form is its one closed line has nothing to open or close.
+  const canToggle = (s: Section) => open(s).length > 1 || runsWidth(open(s)[0]?.runs ?? []) !== runsWidth(closed(s)[0]?.runs ?? [])
   const rows: PlannedRow[] = shown.map((s) => {
-    if (!isOpen.has(s.id)) return { id: s.id, label: s.label, state: 'closed', lines: closed(s) }
-    if (folded.has(s.id)) return { id: s.id, label: s.label, state: 'folded', lines: closed(s) }
-    return { id: s.id, label: s.label, state: 'open', lines: open(s) }
+    const base = { id: s.id, label: s.label, canToggle: canToggle(s) }
+    if (!isOpen.has(s.id)) return { ...base, state: 'closed', lines: closed(s) }
+    if (folded.has(s.id)) return { ...base, state: 'folded', lines: closed(s) }
+    return { ...base, state: 'open', lines: open(s) }
   })
   // Last resort: cut the open row to the rows that are left.
   const total = rows.reduce((n, r) => n + r.lines.length, 0) + (overflow.length ? 1 : 0)
@@ -360,7 +365,11 @@ export function pace(percentUsed: number, resetsAt: string | undefined, windowMs
   return Math.round(expected - percentUsed)
 }
 
-/** A 10-cell gauge with eighth-block partials, on a dark track. */
+/**
+ * A 10-cell gauge: the used part solid with eighth-block partials, the rest in the light shade the
+ * context bar uses for free space. No background colour: a painted track drew as a pale box on
+ * any terminal background but near-black, and swallowed a low fill.
+ */
 export function bar(pct: number, color: string | undefined, width = 10): Run[] {
   const p = Math.max(0, Math.min(100, pct))
   const eighths = Math.round((p / 100) * width * 8)
@@ -368,11 +377,10 @@ export function bar(pct: number, color: string | undefined, width = 10): Run[] {
   const rem = eighths % 8
   let fill = '█'.repeat(full)
   if (rem > 0) fill += String.fromCodePoint(0x2590 - rem) // ▏▎▍▌▋▊▉
-  const track = ' '.repeat(Math.max(0, width - [...fill].length))
-  const TRACK = c256(238)
+  const track = '░'.repeat(Math.max(0, width - [...fill].length))
   const runs: Run[] = []
-  if (fill) runs.push({ t: fill, c: color ?? c256(246), bg: TRACK })
-  if (track) runs.push({ t: track, bg: TRACK })
+  if (fill) runs.push({ t: fill, c: color ?? c256(250) })
+  if (track) runs.push({ t: track, d: true })
   return runs
 }
 
@@ -448,35 +456,34 @@ export function stack(categories: readonly Segment[], width: number): Array<Segm
   return rows.map((c, i) => ({ ...c, cells: cellsOf[i] ?? 0 }))
 }
 
-/** The bar line plus legend lines (`name NN%`, wrapped at `width`, at most `maxLegend` lines). */
-export function contextDetail(categories: readonly Segment[], maxTokens: number, width: number, maxLegend = 2): Run[][] {
-  const segs = stack(categories, width)
-  if (!segs.length) return []
-  const barLine: Run[] = segs.map((s) => ({ t: glyphFor(s.kind).repeat(s.cells), c: s.color }))
+/** The stacked bar as runs, exactly `width` cells. */
+export function stackRuns(categories: readonly Segment[], width: number): Run[] {
+  return stack(categories, width).map((seg) => ({ t: glyphFor(seg.kind).repeat(seg.cells), c: seg.color }))
+}
+
+/** Legend lines (`name NN%` in each category's colour), wrapped at `width`, at most `maxLines`. */
+export function legendLines(categories: readonly Segment[], maxTokens: number, width: number, maxLines = 2): Run[][] {
   const entries = categories
     .filter((c) => c.kind !== 'deferred' && c.tokens > 0)
     .map((c) => ({ t: `${c.name} ${Math.max(1, Math.round((c.tokens / Math.max(1, maxTokens)) * 100))}%`, c: c.color }))
-  const legend: Run[][] = []
+    .filter((e) => cells(e.t) <= width)
+  const lines: Run[][] = []
   let cur: Run[] = []
   let used = 0
   for (const e of entries) {
-    const need = (cur.length ? 2 : 0) + cells(e.t)
-    if (used + need > width) {
-      if (cur.length) legend.push(cur)
-      if (legend.length >= maxLegend) {
-        cur = []
-        break
-      }
+    const gap = cur.length ? 2 : 0
+    if (used + gap + cells(e.t) > width) {
+      lines.push(cur)
+      if (lines.length >= maxLines) return lines
       cur = []
       used = 0
     }
-    if (cells(e.t) > width) continue
     if (cur.length) cur.push({ t: '  ' })
     cur.push(e)
     used += (cur.length > 1 ? 2 : 0) + cells(e.t)
   }
-  if (cur.length && legend.length < maxLegend) legend.push(cur)
-  return [barLine, ...legend]
+  if (cur.length) lines.push(cur)
+  return lines.slice(0, maxLines)
 }
 
 /**
