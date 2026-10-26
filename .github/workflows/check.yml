@@ -5,6 +5,24 @@ on:
   pull_request:
 
 jobs:
+  # agent-panel: the staging hook stays silent and copies byte-for-byte, and the script renders a
+  # sub-agent row and a teammate row, each within the given width.
+  agent-panel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: |
+          data="$RUNNER_TEMP/data"
+          out=$(CLAUDE_PLUGIN_ROOT=plugins/agent-panel CLAUDE_PLUGIN_DATA="$data" bun plugins/agent-panel/scripts/stage.js)
+          test -z "$out"
+          cmp plugins/agent-panel/agent-panel.js "$data/agent-panel.js"
+          echo '{"columns":40,"tasks":[{"id":"a","name":"local_agent","agentType":"Explore","type":"local_agent","status":"running","label":"Reading every file in the repository","model":"claude-haiku-4-5","tokenCount":12345},{"id":"b","name":"reviewer","type":"in_process_teammate","status":"idle","description":"Review the diff"}]}' \
+            | bun plugins/agent-panel/agent-panel.js > "$RUNNER_TEMP/rows"
+          cat "$RUNNER_TEMP/rows"
+          test "$(wc -l < "$RUNNER_TEMP/rows")" -ge 1
+          bun -e 'for (const l of (await Bun.file(process.argv[1]).text()).trim().split("\n")) { const r = JSON.parse(l); const w = [...r.content.replace(/\x1b\[[0-9;]*m/g, "")].reduce((n, c) => n + (/[\ue000-\uf8ff\u{f0000}-\u{ffffd}]/u.test(c) ? 2 : 1), 0); if (!r.id || w > 39) throw new Error(`row ${r.id} is ${w} wide`) }' "$RUNNER_TEMP/rows"
+
   # `claude plugin validate` reads the marketplace + each plugin's manifest, hooks file and skills
   # the way Claude Code will at install time. --strict turns warnings (reserved-looking names,
   # missing metadata, unquoted path variables in hook commands) into failures. Validating the

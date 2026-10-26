@@ -41,7 +41,7 @@ view. Run `/plugin uninstall context-bar@cc-plugins`.
 | `/dash` | Show or hide the whole dashboard. Your choice is remembered across sessions. |
 | `/dash <row>` | Open or close one row (`/dash config`) |
 | `/dash open all` · `/dash close all` | Open or close every row |
-| `/dash cleanup` | Remove the 1.x `statusLine` / `subagentStatusLine` blocks from `settings.json` |
+| `/dash cleanup` | Remove the 1.x `statusLine` / `subagentStatusLine` blocks from `settings.json` (the agent panel's rows are now the [agent-panel](../agent-panel/) plugin) |
 | `ctrl+x ctrl+a` | Claude Code's own collapse for the band above the prompt |
 
 The band is shared with other mods and with Claude Code's surveys. A survey takes precedence while

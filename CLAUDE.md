@@ -99,6 +99,20 @@ register. Verify with `claude plugin validate --strict plugins/statusline-dashbo
 `claude plugin test plugins/statusline-dashboard`; a real look in a terminal is still needed for
 anything visual (the test kit checks the tree, not the paint).
 
+## plugins/agent-panel
+
+The agent panel's rows (`subagentStatusLine`) for sub-agents and agent-team teammates, split out
+of statusline-dashboard 1.x. `agent-panel.js` is a single-file Bun script: JSON on stdin (`columns`,
+`tasks[]`), one `{"id","content"}` line per row out, every row clamped to `columns - 1` cells with
+`vlen` (Nerd Font PUA glyphs count 2). Wiring needs no settings edit: the plugin's root
+`settings.json` sets `subagentStatusLine` (with `agent`, the only keys a plugin's settings take),
+and its command points at `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/data/agent-panel-cc-plugins/agent-panel.js`,
+which `scripts/stage.js` (SessionStart hook; silent, always exit 0) keeps current — the docs
+promise no `${CLAUDE_PLUGIN_ROOT}` substitution in that command, and the root moves per version.
+The path in `settings.json` and the data dir must agree. A user's own `subagentStatusLine` in
+`~/.claude/settings.json` outranks the plugin's. It reads the `subagent.*` ids from
+statusline-dashboard's config file's `hide` list.
+
 ## plugins/session-color
 
 Status-driven terminal background tint. `hooks/hooks.json` maps nine events to one of four state

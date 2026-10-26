@@ -10,6 +10,7 @@
 | Plugin | What it does | Install |
 | --- | --- | --- |
 | [**statusline-dashboard**](plugins/statusline-dashboard/) | A mod: an opinionated dashboard above the prompt, one collapsible row per section — context (with the per-category breakdown that used to be context-bar), rate-limit windows with pace balance, cost, activity and sub-agents, git/PR, and config-scope breakdowns. Nerd Font glyphs. Claude Code 2.1.287+. | `/plugin install statusline-dashboard@cc-plugins` |
+| [**agent-panel**](plugins/agent-panel/) | Styles the agent panel's rows for sub-agents and agent-team teammates: name or type, live progress, model and effort, a coloured status glyph, elapsed time and tokens. Requires Bun. | `/plugin install agent-panel@cc-plugins` |
 | [**session-color**](plugins/session-color/) | Tints the terminal background by session status — amber while Claude works, red when it needs you, green when done — per pane via OSC 11 (tmux-native on Linux, ConPTY on Windows). | `/plugin install session-color@cc-plugins` (+ `/session-color:setup` on Windows) |
 | [**notifications**](plugins/notifications/) | Native desktop notifications when Claude finishes or needs input: elapsed time, focus-the-originating-pane, open-in-editor, AFK webhook. Windows (WinRT) and macOS (UserNotifications). | `/plugin install notifications@cc-plugins` then `/notifications:setup` |
 
@@ -34,7 +35,8 @@ same for all of them:
 - **Coming from context-bar or statusline-dashboard 1.x?** context-bar is now the Model row of
   statusline-dashboard (open it for the breakdown): `/plugin uninstall context-bar@cc-plugins`.
   statusline-dashboard 2.x draws above the prompt instead of in the status line: run
-  `/dash cleanup` once to remove the 1.x `statusLine` block from your settings.
+  `/dash cleanup` once to remove the 1.x `statusLine` / `subagentStatusLine` blocks from your
+  settings. The agent panel's styled rows are now their own plugin, **agent-panel**.
 
 ## Layout
 
@@ -43,6 +45,7 @@ cc-plugins/
 ├─ .claude-plugin/marketplace.json   # the marketplace: one entry per plugin below
 ├─ plugins/
 │  ├─ statusline-dashboard/          # a mod: hooks/register.tsx (+ layout, sections, collect), types/, tests/
+│  ├─ agent-panel/                   # agent-panel.js (subagentStatusLine), settings.json, SessionStart staging hook
 │  ├─ session-color/                 # hooks.json + sh dispatcher; macos/ linux/ (shell), windows/ (Rust)
 │  └─ notifications/                 # hooks.json + sh dispatcher; windows/ (Rust), macos/ (Swift)
 └─ .github/workflows/check.yml       # `claude plugin validate` + `test`, sh -n, cargo + swift builds, .ps1 parse
