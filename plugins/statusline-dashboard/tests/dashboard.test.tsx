@@ -241,6 +241,18 @@ test('tool calls fold into the activity: todos, tasks, edit lines', () => {
   expect(a.recentTools?.map((t) => t.name)).not.toContain('Agent')
 })
 
+test('the open Activity row stacks its tool calls, one per line, repeats folded', () => {
+  let a = emptyActivity()
+  for (const f of ['a.md', 'b.md', 'b.md', 'c.md']) {
+    a = recordTool(a, 'Read', { file_path: `/x/${f}` })
+    a = recordTool(a, 'Read', { file_path: `/x/${f}` }, 'ok')
+  }
+  const x = { activity: a, now: 0 } as never
+  const row = buildSections(x, parseConfig({ rows: ['activity'] }), false).find((s) => s.id === 'activity')
+  const text = row?.detail?.map((l) => l.map((r) => r.t).join(''))
+  expect(text).toEqual(['Read(a.md) ✔︎', 'Read(b.md) ✔︎ ×2', 'Read(c.md) ✔︎'])
+})
+
 test('the agent history outlives the engine\'s roster, teammates included', () => {
   const a1 = { id: 'a1', type: 'general-purpose', description: 'Count to 100', status: 'running' }
   const ann = { id: 't1', type: 'teammate', description: 'Review', status: 'running', mate: true, name: 'ann' }

@@ -260,17 +260,19 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
     // Repeats of the same call collapse into one with a count: `Read(a.ts) ✔︎ ×3`.
     const runs: Array<{ label: string; ok?: boolean; n: number }> = []
     for (const t of a.recentTools) {
-      const label = t.target ? `${t.name}(${truncate(t.target, 24)})` : t.name
+      const label = t.target ? `${t.name}(${truncate(t.target, 48)})` : t.name
       const last = runs[runs.length - 1]
       if (last && last.label === label && last.ok === t.ok) last.n++
       else runs.push({ label, ok: t.ok, n: 1 })
     }
-    const calls = runs.slice(-5).map((c): Run[] => [
-      v(c.label),
-      c.ok === undefined ? v(' …', WARN) : c.ok ? v(` ${OK}`, GOOD) : v(` ${NO}`, BAD),
-      ...(c.n > 1 ? [d(` ×${c.n}`)] : []),
-    ])
-    lines.push(calls.flatMap((c, i) => (i ? [d('  '), ...c] : c)))
+    // One call per line, newest last like the turn history: side by side, the targets got cut.
+    for (const c of runs.slice(-5)) {
+      lines.push([
+        v(c.label),
+        c.ok === undefined ? v(' …', WARN) : c.ok ? v(` ${OK}`, GOOD) : v(` ${NO}`, BAD),
+        ...(c.n > 1 ? [d(` ×${c.n}`)] : []),
+      ])
+    }
   }
   return lines
 }

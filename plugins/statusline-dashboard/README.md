@@ -57,8 +57,8 @@ it's up.
   - **Model**: the context window broken down by category, as `/context` shows it — a stacked
     bar, one colour per category, and a legend.
   - **Turn**: the last five turns — duration, output, input and how much of it came from the cache.
-  - **Activity**: the todo list around the current item, and the last tool calls with what each
-    acted on (✔ answered, ✘ failed, … running; repeats collapse to `×n`).
+  - **Activity**: the todo list around the current item, and the last five tool calls, one per
+    line with what each acted on (✔ answered, ✘ failed, … running; repeats collapse to `×n`).
   - **Agents**: the session's last six sub-agents and teammates in the order they started, each
     with a robot (sub-agent) or person (teammate), its type or name, its task and where it stands.
     The dashboard keeps this history itself, because Claude Code's agent list drops an agent soon

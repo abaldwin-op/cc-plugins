@@ -1,7 +1,7 @@
 {
   "name": "statusline-dashboard",
   "displayName": "Statusline Dashboard",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "A mod: an opinionated dashboard above the prompt with collapsible rows — context (with a per-category breakdown), rate-limit windows with pace balance, cost and throughput, activity and sub-agents, git/PR, and config-scope breakdowns. Rows and widgets are configurable. Requires Claude Code 2.1.287+.",
   "author": {
     "name": "Anthony Baldwin",
