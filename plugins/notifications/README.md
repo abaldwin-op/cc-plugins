@@ -9,13 +9,13 @@ Native desktop notifications for [Claude Code](https://claude.com/product/claude
 
 When Claude finishes or needs input, you get a notification showing:
 
-- **Project directory** and **elapsed time** (e.g., "Task completed (12s)")
+- **Project directory** and **elapsed time** (e.g., "Task completed (12s)"), and on macOS the **session** — its `/rename` name, else the short session id
 - Clicking it (macOS) or the **Focus Terminal** button (Windows) focuses the originating **window/tab/pane**:
   - Windows Terminal: UI Automation switches to the correct tab (preserves snap/maximize layout)
-  - Ghostty: terminal+tab+window ID → CWD (exact, parent or child dir)
+  - Ghostty: the pane's terminal ID, found once per session by briefly tagging the pane's title through Claude's tty (so panes sharing a directory, or tabs dragged to another window, still resolve); raises the pane's window first, so a fullscreen Space or Stage Manager stage comes forward. Only without an ID (Ghostty `title` pinned in its config, tmux): CWD, when exactly one pane matches
   - iTerm2: session ID → CWD+name → prefix CWD · WezTerm: pane ID via CLI · Terminal.app: tty → process name
 - **Open in Editor** button — opens the project directory in your configured editor
-- Notifications replace by session (no stacking)
+- Notifications replace by session (no stacking), and go away with their session: SessionEnd clears them, and a session that dies without one (pane closed, crash) is noticed by its waiting notifier and swept on the next notification. Clicking one whose session is gone does nothing rather than focus a wrong pane (macOS)
 - Optional **webhook** — JSON POST to Discord, Slack, ntfy, Gotify… when you're AFK (screen locked / idle)
 - Configurable sound, per-type messages and icons
 - Skips IDE terminals (VS Code, Zed, Cursor) — only fires in standalone terminals
@@ -99,7 +99,7 @@ Sends a JSON POST when you're AFK (screen locked or idle for `idle_minutes`).
 | `webhook.idle_minutes` | Minutes of inactivity before sending (default: 15, `0` = always send) |
 | `webhook.payload` | Path to a JSON template file (relative to the config directory) |
 
-Copy a service template (`webhook.discord.json.example`, `webhook.slack.json.example`, `webhook.ntfy.json.example`, `webhook.gotify.json.example`) to the name in `payload` and customize. Template variables: `{{title}}`, `{{message}}`, `{{elapsed}}`, `{{project}}`, `{{event}}`, `{{notification_type}}`.
+Copy a service template (`webhook.discord.json.example`, `webhook.slack.json.example`, `webhook.ntfy.json.example`, `webhook.gotify.json.example`) to the name in `payload` and customize. Template variables: `{{title}}`, `{{message}}`, `{{elapsed}}`, `{{project}}`, `{{event}}`, `{{notification_type}}`, `{{session}}` (macOS).
 
 ## How it works
 
@@ -110,7 +110,7 @@ Copy a service template (`webhook.discord.json.example`, `webhook.slack.json.exa
 | `UserPromptSubmit` (async) | `on-submit` | Records session state (cwd, timestamp, terminal/tab/tty). On Windows it stays alive as the **focus watcher** — spawned inside Windows Terminal's process tree so UI Automation tab selection works. |
 | `Notification` (async) | `notify notification` | Shows the notification; `permission_prompt` / `elicitation_dialog` / `idle_prompt` pick their own message + icon |
 | `Stop` (async) | `notify stop` | "Task completed (12s)" |
-| `SessionEnd` | `on-end` | Stops the watcher, cleans up temp files |
+| `SessionEnd` | `on-end` | Stops the watcher, cleans up temp files and (macOS) the session's notification |
 
 `Notification`/`Stop` are async because the macOS handler blocks until the notification is clicked or dismissed. Per-session state lives in `%TEMP%` / `/tmp` as `claude-timer-{session_id}`, `claude-watcher-…`, `claude-focus-trigger-…` (Windows) and `claude-notifier-…` (macOS).
 

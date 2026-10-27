@@ -8,8 +8,10 @@
 //                dispatches to focus or editor-open. Replaces by session ID.
 //                Falls back to terminal-notifier, then osascript.
 //   focus      — Focuses the correct terminal window/tab/pane using AppleScript.
-//                Supports Ghostty (by cwd), iTerm2 (by tty), Terminal.app (by tty).
-//   on-end     — SessionEnd hook. Cleans up temp files.
+//                Supports Ghostty (by terminal id), iTerm2 (by session id), Terminal.app (by tty).
+//   on-end     — SessionEnd hook. Cleans up temp files and the session's notification.
+//   (no args)  — LaunchServices relaunching the bundle for a click on a notification whose
+//                poster has exited: handles that click from the notification's userInfo.
 //   install    — Merges hook config into ~/.claude/settings.json.
 //   uninstall  — Removes hooks from settings.json, cleans up temp files.
 //
@@ -18,8 +20,9 @@
 //   terminal: "ghostty" | "iterm2" | "terminal" (app to focus on click)
 //   editor:   "zed" | "code" | "cursor" (app to open project in)
 //
-// State: /tmp/claude-timer-{session_id}.txt (pipe-delimited session data)
+// State: /tmp/claude-timer-{session_id}.txt (pipe-delimited session data, incl. Claude's PID)
 //        /tmp/claude-notifier-{session_id}.txt (PID of notification process)
+// Both are swept once their session's Claude process is gone, as are its notifications.
 
 import Foundation
 import CoreGraphics
@@ -133,7 +136,8 @@ func isAFK(idleMinutes: Int) -> Bool {
 // MARK: - Webhook
 
 /// Sends a webhook by reading a JSON template file and substituting variables.
-/// Variables: {{title}}, {{message}}, {{elapsed}}, {{project}}, {{event}}
+/// Variables: {{title}}, {{message}}, {{elapsed}}, {{project}}, {{event}}, {{notification_type}},
+/// {{session}} (the /rename title, else the short session id)
 func sendWebhook(url: String, templatePath: String, vars: [String: String]) {
     guard let requestUrl = URL(string: url) else { return }
     guard var template = try? String(contentsOfFile: templatePath, encoding: .utf8) else { return }
@@ -251,6 +255,65 @@ func findTty() -> String {
     return ""
 }
 
+/// Claude Code's own process: the native build's executable, or node/bun running the npm CLI.
+/// Same test as session-color's is_claude — a shell whose command line merely mentions a claude
+/// path (a hook command) is not Claude.
+func isClaude(_ pid: Int32) -> Bool {
+    if (shell("ps -o comm= -p \(pid)") as NSString).lastPathComponent == "claude" { return true }
+    let argv = shell("ps -o args= -p \(pid)").split(separator: " ").map(String.init)
+    guard let first = argv.first else { return false }
+    switch (first as NSString).lastPathComponent {
+    case "claude": return true
+    case "node", "bun": return argv.count > 1 && argv[1].contains("claude")
+    default: return false
+    }
+}
+
+/// PID of the nearest Claude Code ancestor — the session this hook belongs to — or 0.
+func findClaudePid() -> Int32 {
+    var pid = getppid()
+    for _ in 0..<20 {
+        guard pid > 1 else { break }
+        if isClaude(pid) { return pid }
+        pid = Int32(shell("ps -o ppid= -p \(pid)")) ?? 0
+    }
+    return 0
+}
+
+/// A session lives as long as its Claude process. Closing the pane kills Claude without a
+/// SessionEnd, so this — not the hook — is what says a session is gone. The identity check guards
+/// against PID reuse. 0 (unknown: state from an older build) counts as alive: no evidence either way.
+func isSessionAlive(_ pid: Int32) -> Bool {
+    pid <= 0 || (kill(pid, 0) == 0 && isClaude(pid))
+}
+
+/// The session's name as the user knows it: its /rename title, else the short id Claude Code shows
+/// (first 8 hex digits). The title isn't in the hook input; the transcript appends a
+/// `custom-title` entry on rename and again as the session goes on, so the last one is current.
+/// Searched from the end, without decoding the (possibly many-MB) transcript.
+func sessionLabel(sid: String, transcriptPath: String) -> String {
+    let short = String(sid.prefix(8))
+    guard !transcriptPath.isEmpty,
+          let data = FileManager.default.contents(atPath: transcriptPath),
+          let hit = data.range(of: Data("\"type\":\"custom-title\"".utf8), options: .backwards)
+    else { return short }
+    let newline = UInt8(ascii: "\n")
+    let start = data[..<hit.lowerBound].lastIndex(of: newline).map { $0 + 1 } ?? data.startIndex
+    let end = data[hit.upperBound...].firstIndex(of: newline) ?? data.endIndex
+    guard let entry = try? JSONSerialization.jsonObject(with: data[start..<end]) as? [String: Any],
+          let title = entry["customTitle"] as? String, !title.isEmpty
+    else { return short }
+    return title
+}
+
+/// Writes raw bytes to a tty device without making it our controlling terminal (hooks have none).
+func writeTty(_ tty: String, _ s: String) {
+    let fd = open(tty, O_WRONLY | O_NOCTTY | O_NONBLOCK)
+    guard fd >= 0 else { return }
+    s.withCString { _ = write(fd, $0, strlen($0)) }
+    close(fd)
+}
+
 // MARK: - Temp files
 
 func timerPath(_ sid: String) -> String { "/tmp/claude-timer-\(sid).txt" }
@@ -263,7 +326,7 @@ func timerWrite(_ sid: String, _ data: String) {
 func timerRead(_ sid: String) -> [String]? {
     guard let content = try? String(contentsOfFile: timerPath(sid), encoding: .utf8)
     else { return nil }
-    return content.components(separatedBy: "|")
+    return content.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "|")
 }
 
 func timerDelete(_ sid: String) {
@@ -292,57 +355,97 @@ func killPreviousNotifier(_ sid: String) {
     try? FileManager.default.removeItem(atPath: path)
 }
 
-/// Captures terminal identifiers for pane-level focus restoration.
-/// Returns "termId::tabId::windowId" for Ghostty, session ID for iTerm2, pane ID for WezTerm.
-func captureTerminalId(_ terminal: String, cwd: String = "", projectRoot: String = "") -> String {
-    switch terminal.lowercased() {
-    case "ghostty":
-        // Match by CWD to avoid race condition when two sessions fire on-submit simultaneously.
-        // The focused terminal is only used as a tiebreaker when multiple panes share a directory.
-        let eCwd = escapeAppleScript(cwd)
-        let eRoot = escapeAppleScript(projectRoot)
-        return osascript("""
+/// Removes the session's notification from Notification Center. Spawned as a short-lived child
+/// (UNUserNotificationCenter wants an NSApplication) so the calling hook never waits on it.
+func spawnClearNotification(_ sid: String) {
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: ProcessInfo.processInfo.arguments[0])
+    proc.arguments = ["clear-notification", sid]
+    try? proc.run()
+}
+
+/// Drops temp files of sessions whose Claude is gone (pane closed, crash: no SessionEnd ran).
+/// Files from older builds carry no PID; those go once they're a day old.
+func sweepTempFiles() {
+    let fm = FileManager.default
+    guard let files = try? fm.contentsOfDirectory(atPath: "/tmp") else { return }
+    let dayAgo = Date().addingTimeInterval(-86_400)
+    for file in files where file.hasPrefix("claude-timer-") && file.hasSuffix(".txt") {
+        let sid = String(file.dropFirst("claude-timer-".count).dropLast(".txt".count))
+        let timer = timerRead(sid) ?? []
+        let stale: Bool
+        if timer.count > 7, let pid = Int32(timer[7]), pid > 0 {
+            stale = !isSessionAlive(pid)
+        } else {
+            let mtime = (try? fm.attributesOfItem(atPath: timerPath(sid)))?[.modificationDate] as? Date
+            stale = (mtime ?? .distantPast) < dayAgo
+        }
+        if stale {
+            timerDelete(sid)
+            notifierPidDelete(sid)
+        }
+    }
+    for file in files where file.hasPrefix("claude-notifier-") && file.hasSuffix(".txt") {
+        let path = "/tmp/\(file)"
+        let pid = Int32((try? String(contentsOfFile: path, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
+        if pid <= 0 || kill(pid, 0) != 0 { try? fm.removeItem(atPath: path) }
+    }
+}
+
+/// Identifies the Ghostty pane on `tty` by its terminal id.
+///
+/// Ghostty's AppleScript exposes no tty or pid per terminal, and working directories collide (every
+/// pane opened in one repo reports the same one; Claude's own cd's don't change it either), so the
+/// pane is asked to name itself: an OSC 2 title carrying a nonce goes to Claude's tty, and the
+/// terminal whose title is the nonce is ours. Its id is a UUID that lives as long as the pane,
+/// wherever the pane moves — window and tab ids don't survive a tab being dragged to another window.
+/// Claude retitles itself while working (the spinner), which can overwrite the nonce before Ghostty
+/// is asked, hence the retries. The old title is written back afterwards.
+/// Returns "" when Ghostty never shows the nonce (a `title` set in Ghostty's config pins it; inside
+/// tmux the OSC goes to tmux) — focus then falls back to a working-directory match.
+func captureGhosttyId(tty: String) -> String {
+    guard !tty.isEmpty else { return "" }
+    let titles = osascript("""
+        tell application "Ghostty"
+            set out to ""
+            repeat with t in terminals
+                set out to out & (id of t) & "\t" & (name of t) & linefeed
+            end repeat
+            return out
+        end tell
+        """)
+    let nonce = "cc-notifications-\(UUID().uuidString)"
+    var found = ""
+    for _ in 0..<5 {
+        writeTty(tty, "\u{1b}]2;\(nonce)\u{07}")
+        usleep(30_000)
+        found = osascript("""
             tell application "Ghostty"
-                set candidates to {}
-                set focusedId to ""
                 try
-                    set focusedId to id of focused terminal of selected tab of front window
+                    return id of (first terminal whose name is "\(nonce)")
                 end try
-                repeat with w in windows
-                    repeat with tb in tabs of w
-                        repeat with term in terminals of tb
-                            set d to working directory of term
-                            if d is "\(eCwd)" or d is "\(eRoot)" or ("\(eCwd)" starts with d and d starts with "\(eRoot)") then
-                                set end of candidates to {termId:id of term, tabId:id of tb, winId:id of w}
-                            end if
-                        end repeat
-                    end repeat
-                end repeat
-                if (count of candidates) is 0 then
-                    -- No CWD match; fall back to focused terminal
-                    try
-                        set w to front window
-                        set tb to selected tab of w
-                        set ft to focused terminal of tb
-                        return (id of ft) & "::" & (id of tb) & "::" & (id of w)
-                    end try
-                    return ""
-                end if
-                if (count of candidates) is 1 then
-                    set c to item 1 of candidates
-                    return (termId of c) & "::" & (tabId of c) & "::" & (winId of c)
-                end if
-                -- Multiple matches: prefer the focused terminal as tiebreaker
-                repeat with c in candidates
-                    if (termId of c) is focusedId then
-                        return (termId of c) & "::" & (tabId of c) & "::" & (winId of c)
-                    end if
-                end repeat
-                -- None focused; use first candidate
-                set c to item 1 of candidates
-                return (termId of c) & "::" & (tabId of c) & "::" & (winId of c)
+                return ""
             end tell
             """)
+        if !found.isEmpty { break }
+    }
+    guard !found.isEmpty else { return "" }
+    let old = titles.components(separatedBy: "\n")
+        .first { $0.hasPrefix(found + "\t") }
+        .map { String($0.dropFirst(found.count + 1)) } ?? ""
+    // Control characters would end the OSC early or start another sequence.
+    let clean = String(old.unicodeScalars.filter { $0.value >= 0x20 && $0.value != 0x7f })
+    if !clean.isEmpty { writeTty(tty, "\u{1b}]2;\(clean)\u{07}") }
+    return found
+}
+
+/// Captures terminal identifiers for pane-level focus restoration.
+/// Returns the terminal id for Ghostty, session ID for iTerm2, pane ID for WezTerm.
+func captureTerminalId(_ terminal: String, tty: String) -> String {
+    switch terminal.lowercased() {
+    case "ghostty":
+        return captureGhosttyId(tty: tty)
     case "iterm", "iterm2":
         return osascript("""
             tell application "iTerm2" to return id of current session of current tab of current window
@@ -361,14 +464,13 @@ func captureTerminalId(_ terminal: String, cwd: String = "", projectRoot: String
 // MARK: - Native notifications (UNUserNotificationCenter)
 
 class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
-    var onAction: ((String) -> Void)?
+    var onResponse: ((UNNotificationResponse) -> Void)?
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler handler: @escaping () -> Void) {
-        onAction?(response.actionIdentifier)
+        onResponse?(response)
         handler()
-        CFRunLoopStop(CFRunLoopGetMain())
     }
 
     // Show banner even when our process is considered "foreground"
@@ -379,15 +481,60 @@ class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     }
 }
 
+/// Stops NSApplication.run(). The dummy event makes the run loop notice immediately.
+func stopApp() {
+    let app = NSApplication.shared
+    app.stop(nil)
+    let event = NSEvent.otherEvent(with: .applicationDefined, location: .zero,
+                                   modifierFlags: [], timestamp: 0, windowNumber: 0,
+                                   context: nil, subtype: 0, data1: 0, data2: 0)
+    if let event = event { app.postEvent(event, atStart: true) }
+}
+
+/// Acts on a notification response using the session state the notification itself carries
+/// (userInfo), not the state of whichever process receives it: with several sessions' notifiers
+/// alive, the click can reach any instance of the app, and once the poster has exited macOS
+/// relaunches the bundle to deliver it.
+func handleResponse(_ response: UNNotificationResponse) {
+    let info = response.notification.request.content.userInfo
+    func s(_ key: String) -> String { info[key] as? String ?? "" }
+    switch response.actionIdentifier {
+    case UNNotificationDefaultActionIdentifier:
+        // Session gone (pane closed, Claude killed): there is no pane to focus, and any match by
+        // working directory would land on some other session's pane.
+        guard isSessionAlive(Int32(s("pid")) ?? 0) else { return }
+        focusTerminal(terminal: s("terminal"), cwd: s("cwd"), tty: s("tty"), terminalId: s("terminalId"))
+    case "OPEN_EDITOR":
+        openEditor(editor: s("editor"), cwd: s("editorCwd"))
+    default:
+        break // Dismissed
+    }
+}
+
+/// Removes delivered notifications whose session's Claude is gone. Ones from older builds carry no
+/// PID and are left alone.
+func sweepDeliveredNotifications(_ center: UNUserNotificationCenter) {
+    let sem = DispatchSemaphore(value: 0)
+    center.getDeliveredNotifications { list in
+        let dead = list.filter {
+            guard let pid = Int32($0.request.content.userInfo["pid"] as? String ?? "") else { return false }
+            return !isSessionAlive(pid)
+        }.map { $0.request.identifier }
+        if !dead.isEmpty { center.removeDeliveredNotifications(withIdentifiers: dead) }
+        sem.signal()
+    }
+    _ = sem.wait(timeout: .now() + 5)
+}
+
 /// Posts a native macOS notification with an action button.
-/// Click notification body = focus terminal, action button = open editor.
-/// Blocks until the user interacts or this process is killed.
+/// Click notification body = focus terminal, action button = open editor; both act on `userInfo`.
+/// Blocks until this notification is acted on or gone, the session's Claude (`claudePid`) exits,
+/// or this process is killed.
 /// Returns true if the notification was posted successfully.
-func showNativeNotification(title: String, body: String, groupId: String,
+func showNativeNotification(title: String, subtitle: String, body: String, groupId: String,
                             editorButtonTitle: String, iconPath: String?,
-                            soundName: String?,
-                            onContentClick: @escaping () -> Void,
-                            onEditorClick: @escaping () -> Void) -> Bool {
+                            soundName: String?, userInfo: [String: String],
+                            claudePid: Int32) -> Bool {
     // NSApplication is required for UNUserNotificationCenter delegate callbacks.
     // Without it, the notification posts but click handlers never fire.
     let app = NSApplication.shared
@@ -395,22 +542,10 @@ func showNativeNotification(title: String, body: String, groupId: String,
 
     let center = UNUserNotificationCenter.current()
     let delegate = NotificationDelegate()
-    delegate.onAction = { actionId in
-        switch actionId {
-        case UNNotificationDefaultActionIdentifier:
-            onContentClick()
-        case "OPEN_EDITOR":
-            onEditorClick()
-        default:
-            break // Dismissed
-        }
-        // Stop the NSApplication run loop after handling the action
-        app.stop(nil)
-        // Post a dummy event to ensure the run loop exits immediately
-        let event = NSEvent.otherEvent(with: .applicationDefined, location: .zero,
-                                       modifierFlags: [], timestamp: 0, windowNumber: 0,
-                                       context: nil, subtype: 0, data1: 0, data2: 0)
-        if let event = event { app.postEvent(event, atStart: true) }
+    delegate.onResponse = { response in
+        handleResponse(response)
+        // Another session's notification (see handleResponse): ours is still up, keep waiting.
+        if response.notification.request.identifier == groupId { stopApp() }
     }
     center.delegate = delegate
 
@@ -426,7 +561,8 @@ func showNativeNotification(title: String, body: String, groupId: String,
     var authorized = false
     let authSem = DispatchSemaphore(value: 0)
     DispatchQueue.global().async {
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if !granted { fputs("notifications: not authorized \(error.map { "\($0)" } ?? "")\n", stderr) }
             authorized = granted
             authSem.signal()
         }
@@ -434,16 +570,19 @@ func showNativeNotification(title: String, body: String, groupId: String,
     authSem.wait()
     guard authorized else { return false }
 
-    // Replace previous notification for this session
+    // Replace previous notification for this session; drop those of sessions that are gone
     center.removeDeliveredNotifications(withIdentifiers: [groupId])
     center.removePendingNotificationRequests(withIdentifiers: [groupId])
+    sweepDeliveredNotifications(center)
 
     // Build notification content
     let content = UNMutableNotificationContent()
     content.title = title
+    content.subtitle = subtitle
     content.body = body
     content.categoryIdentifier = "CC_HOOKS"
     content.threadIdentifier = groupId
+    content.userInfo = userInfo
     if let soundName = soundName {
         if soundName.isEmpty {
             content.sound = nil
@@ -474,15 +613,46 @@ func showNativeNotification(title: String, body: String, groupId: String,
     let postSem = DispatchSemaphore(value: 0)
     DispatchQueue.global().async {
         center.add(request) { error in
-            if error != nil { postOk = false }
+            if let error = error {
+                fputs("notifications: post failed: \(error)\n", stderr)
+                postOk = false
+            }
             postSem.signal()
         }
     }
     postSem.wait()
     guard postOk else { return false }
 
+    // The session ending without SessionEnd (pane closed, crash, kill) would otherwise leave this
+    // process waiting and its notification pointing at a pane that no longer exists.
+    let sessionWatch: DispatchSourceProcess? = claudePid > 0
+        ? DispatchSource.makeProcessSource(identifier: pid_t(claudePid), eventMask: .exit, queue: .main)
+        : nil
+    sessionWatch?.setEventHandler {
+        center.removeDeliveredNotifications(withIdentifiers: [groupId])
+        stopApp()
+    }
+    sessionWatch?.resume()
+    // Exited before the watch was armed: kqueue never reports it.
+    if !isSessionAlive(claudePid) {
+        center.removeDeliveredNotifications(withIdentifiers: [groupId])
+        return true
+    }
+
+    // Dismissed from Notification Center (no response is delivered for that), or clicked and
+    // handled by another instance: nothing left to wait for.
+    let gone = Timer(timeInterval: 30, repeats: true) { _ in
+        center.getDeliveredNotifications { list in
+            guard !list.contains(where: { $0.request.identifier == groupId }) else { return }
+            DispatchQueue.main.async { stopApp() }
+        }
+    }
+    RunLoop.main.add(gone, forMode: .common)
+
     // Block on NSApplication run loop — callbacks fire here
-    app.run()
+    withExtendedLifetime((delegate, sessionWatch)) { app.run() }
+    gone.invalidate()
+    sessionWatch?.cancel()
 
     return true
 }
@@ -545,19 +715,25 @@ func onSubmit(baseDir: String) -> Int32 {
     let ts = nowMs()
     let editor = config.editor ?? "zed"
     let tty = findTty()
-    let terminalId = captureTerminalId(terminal, cwd: cwd, projectRoot: projectRoot)
+    let claudePid = findClaudePid()
+
+    // A pty belongs to one pane for its whole life, so the same Claude on the same tty is still in
+    // the pane captured last time — skip re-capturing (for Ghostty that's a title flicker per prompt).
+    let terminalId: String = {
+        if let prev = timerRead(sid), prev.count > 7, prev[2] == terminal, prev[4] == tty,
+           prev[7] == "\(claudePid)", !prev[5].isEmpty, !prev[5].contains("::") {
+            return prev[5]
+        }
+        return captureTerminalId(terminal, tty: tty)
+    }()
 
     // Clear any displayed notification for this session — user is actively engaged.
-    // Spawn a short-lived background process so we don't block the synchronous hook.
-    let selfPath = ProcessInfo.processInfo.arguments[0]
-    let clearProc = Process()
-    clearProc.executableURL = URL(fileURLWithPath: selfPath)
-    clearProc.arguments = ["clear-notification", sid]
-    try? clearProc.run()
+    spawnClearNotification(sid)
 
-    // Format: timestamp|cwd|terminal|editor|tty|terminalId|projectRoot
-    timerWrite(sid, "\(ts)|\(cwd)|\(terminal)|\(editor)|\(tty)|\(terminalId)|\(projectRoot)")
+    // Format: timestamp|cwd|terminal|editor|tty|terminalId|projectRoot|claudePid
+    timerWrite(sid, "\(ts)|\(cwd)|\(terminal)|\(editor)|\(tty)|\(terminalId)|\(projectRoot)|\(claudePid)")
 
+    sweepTempFiles()
     return 0
 }
 
@@ -584,6 +760,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
     let tty = timer.count > 4 ? timer[4] : ""
     let terminalId = timer.count > 5 ? timer[5] : ""
     let projectRoot = timer.count > 6 ? timer[6] : ""
+    let claudePid = timer.count > 7 ? Int32(timer[7]) ?? 0 : 0
 
     // Use jsonCwd for title (shows where Claude is NOW), timer CWD for focus
     let displayCwd = jsonCwd ?? timerCwd
@@ -607,6 +784,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
 
     let config = loadConfig(baseDir: baseDir)
     let elapsed = formatElapsed(nowMs() - startMs)
+    let session = sessionLabel(sid: sid, transcriptPath: json["transcript_path"] as? String ?? "")
 
     let message: String
     if hookEvent == "stop" {
@@ -661,6 +839,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
                 "project": dir,
                 "event": hookEvent,
                 "notification_type": notificationType,
+                "session": session,
             ]
             DispatchQueue.global().async {
                 sendWebhook(url: webhookUrl, templatePath: templatePath, vars: vars)
@@ -681,16 +860,15 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
     // Try native macOS notification first
     // Click body = focus terminal, action button = open editor
     let nativeOk = showNativeNotification(
-        title: dir, body: body, groupId: groupId,
+        title: dir, subtitle: session, body: body, groupId: groupId,
         editorButtonTitle: editorButton,
         iconPath: FileManager.default.fileExists(atPath: iconPath) ? iconPath : nil,
         soundName: config.sound,
-        onContentClick: {
-            focusTerminal(terminal: terminal, cwd: focusCwd, tty: tty, terminalId: terminalId)
-        },
-        onEditorClick: {
-            openEditor(editor: editor, cwd: editorCwd)
-        }
+        userInfo: [
+            "sid": sid, "pid": "\(claudePid)", "terminal": terminal, "cwd": focusCwd, "tty": tty,
+            "terminalId": terminalId, "editor": editor, "editorCwd": editorCwd,
+        ],
+        claudePid: claudePid
     )
 
     if !nativeOk {
@@ -708,6 +886,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
 
             var args = [
                 "-title", dir,
+                "-subtitle", session,
                 "-message", body,
                 "-group", groupId,
                 "-sender", senderBundleId,
@@ -736,6 +915,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
 
             switch result {
             case "@CONTENTCLICKED":
+                guard isSessionAlive(claudePid) else { break }
                 focusTerminal(terminal: terminal, cwd: focusCwd, tty: tty, terminalId: terminalId)
             case let action where action.hasPrefix("Open in"):
                 openEditor(editor: editor, cwd: editorCwd)
@@ -760,57 +940,86 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
 // Primary match: session ID captured during on-submit.
 // Fallback: tty (iTerm2, Terminal.app) or working directory (Ghostty).
 
+/// Bundle ids of the terminals we focus, for handing activation over to them.
+func terminalBundleId(_ terminal: String) -> String? {
+    switch terminal.lowercased() {
+    case "ghostty": return "com.mitchellh.ghostty"
+    case "iterm", "iterm2": return "com.googlecode.iterm2"
+    case "terminal": return "com.apple.Terminal"
+    case "wezterm": return "com.github.wez.wezterm"
+    default: return nil
+    }
+}
+
 func focusTerminal(terminal: String, cwd: String, tty: String, terminalId: String) {
     let eCwd = escapeAppleScript(cwd)
     let eTty = escapeAppleScript(tty)
     let eTermId = escapeAppleScript(terminalId)
 
+    // macOS 14+ activation is cooperative: an app activating itself (which is what the terminal does
+    // on `activate`) is refused unless the active app yields to it. A notification click makes us the
+    // active app, so yield — otherwise the terminal can come up behind the current app, or not switch
+    // to the fullscreen Space / Stage Manager stage that holds the pane.
+    if #available(macOS 14.0, *), let bundleId = terminalBundleId(terminal) {
+        NSApplication.shared.yieldActivation(toApplicationWithBundleIdentifier: bundleId)
+    }
+
     switch terminal.lowercased() {
     case "ghostty":
-        // terminalId format: "termId::tabId::windowId" (captured at on-submit)
-        let parts = terminalId.components(separatedBy: "::")
-        let termId = parts.count > 0 ? escapeAppleScript(parts[0]) : ""
-        let tabId = parts.count > 1 ? escapeAppleScript(parts[1]) : ""
-        let windowId = parts.count > 2 ? escapeAppleScript(parts[2]) : ""
-        // activate window deminiaturizes + brings to front (calls makeKeyAndOrderFront)
-        // System Events cannot see Ghostty windows (GPU/Metal rendering)
-        // Ghostty tabs don't support select/set via AppleScript, but
-        // "focus terminal" auto-switches to the terminal's tab.
+        // terminalId: the pane's terminal id (captureGhosttyId). State from older builds holds
+        // "termId::tabId::windowId"; only the terminal id is used — window and tab ids change when a
+        // tab is dragged to another window, which sent clicks to the wrong place.
+        // Order matters for fullscreen Spaces and Stage Manager: make the pane's window key FIRST
+        // (`activate window` deminiaturizes and orders it front), then activate the app, so macOS
+        // switches to the Space/stage of that window rather than of whichever Ghostty window was
+        // last active. System Events can't see Ghostty windows (GPU/Metal rendering), so this all
+        // goes through Ghostty's own dictionary.
+        let termId = escapeAppleScript(terminalId.components(separatedBy: "::")[0])
         osascript("""
             tell application "Ghostty"
-                -- Primary: activate window + focus terminal by ID
-                if "\(termId)" is not "" and "\(windowId)" is not "" then
-                    try
-                        set w to window id "\(windowId)"
-                        activate window w
-                        if "\(tabId)" is not "" then
-                            repeat with t in terminals of (tab id "\(tabId)" of w)
+                if "\(termId)" is not "" then
+                    repeat with w in windows
+                        repeat with tb in tabs of w
+                            repeat with t in terminals of tb
                                 if (id of t) is "\(termId)" then
+                                    activate window w
+                                    try
+                                        select tab tb
+                                    end try
                                     focus t
+                                    activate
                                     return
                                 end if
                             end repeat
-                        end if
-                    end try
+                        end repeat
+                    end repeat
+                    -- The pane is gone. Don't guess another one.
+                    activate
+                    return
                 end if
-                -- Fallback: search all terminals by CWD
-                activate
+                -- No terminal id captured (Ghostty ignoring OSC titles, tmux): working directory,
+                -- only when exactly one pane has it — several panes in one repo is the norm.
+                set hitW to missing value
+                set hitT to missing value
+                set n to 0
                 if "\(eCwd)" is not "" then
-                    try
-                        repeat with w in windows
-                            repeat with tb in tabs of w
-                                repeat with term in terminals of tb
-                                    set d to working directory of term
-                                    if d is "\(eCwd)" or "\(eCwd)" starts with (d & "/") or d starts with ("\(eCwd)" & "/") then
-                                        activate window w
-                                        focus term
-                                        return
-                                    end if
-                                end repeat
+                    repeat with w in windows
+                        repeat with tb in tabs of w
+                            repeat with t in terminals of tb
+                                if (working directory of t) is "\(eCwd)" then
+                                    set n to n + 1
+                                    set hitW to contents of w
+                                    set hitT to contents of t
+                                end if
                             end repeat
                         end repeat
-                    end try
+                    end repeat
                 end if
+                if n is 1 then
+                    activate window hitW
+                    focus hitT
+                end if
+                activate
             end tell
             """)
     case "iterm", "iterm2":
@@ -947,8 +1156,32 @@ func onEnd() -> Int32 {
     else { return 1 }
 
     killPreviousNotifier(sid)
+    // The killed notifier can't take its notification with it; a click on it would relaunch the
+    // app for a session that no longer exists.
+    spawnClearNotification(sid)
     timerDelete(sid)
     notifierPidDelete(sid)
+    return 0
+}
+
+// MARK: - Launched by a notification click
+
+/// LaunchServices launched the bundle (no subcommand): a notification was clicked after the process
+/// that posted it exited. The response arrives through the delegate once the app finishes launching.
+func onLaunch() -> Int32 {
+    let app = NSApplication.shared
+    app.setActivationPolicy(.accessory)
+    let center = UNUserNotificationCenter.current()
+    let delegate = NotificationDelegate()
+    delegate.onResponse = { response in
+        handleResponse(response)
+        stopApp()
+    }
+    center.delegate = delegate
+    sweepDeliveredNotifications(center)
+    // Opened some other way (Finder, `open`): no response is coming.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { stopApp() }
+    withExtendedLifetime(delegate) { app.run() }
     return 0
 }
 
@@ -1048,9 +1281,9 @@ func uninstallHooks() -> Int32 {
 // MARK: - Entry point
 
 let args = CommandLine.arguments
-guard args.count >= 2 else {
-    fputs("Usage: notifications <on-submit|notify|focus|on-end|install|uninstall>\n", stderr)
-    exit(1)
+// LaunchServices passes no subcommand (older macOS: a -psn_ process serial number).
+if args.count < 2 || args[1].hasPrefix("-psn") {
+    exit(onLaunch())
 }
 
 // baseDir = where config.json lives; icons/ and webhook templates resolve against it.
