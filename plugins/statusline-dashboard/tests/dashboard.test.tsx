@@ -349,6 +349,25 @@ test('the user config picks the rows and their order', async ($, on) => {
   await ui.unmount()
 })
 
+test('a blank line above the first row, paid from the budget', async ($, on) => {
+  expect(parseConfig({}).padTop).toBe(1)
+  expect(parseConfig({ padTop: 0 }).padTop).toBe(0)
+  expect(parseConfig({ padTop: -2 }).padTop).toBe(1)
+  expect(parseConfig({ padTop: 9 }).padTop).toBe(3)
+
+  const clock = engine(on)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { paddingTop: 1 } })
+  await ui.unmount()
+  // No room to spare: the rows keep every line, the padding goes.
+  ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, maxRows: 3 } })
+  expect(await ui.drawn()).toMatchObject({ type: 'Box', props: { paddingTop: 0 } })
+  expect(await ui.find({ type: 'Text', text: /^Model/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('/dash cleanup removes only the 1.x blocks, keeping a backup', async ($, on) => {
   const settings = { theme: 'dark', statusLine: { type: 'command', command: 'bun "/home/me/.claude/plugins/data/statusline-dashboard-cc-plugins/statusline.js"' } }
   const files: Record<string, string> = { '/home/me/.claude/settings.json': JSON.stringify(settings) }

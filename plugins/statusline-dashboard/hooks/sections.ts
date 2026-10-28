@@ -48,6 +48,8 @@ export type Config = {
   /** `gh pr view` for the Repo row's PR badge. */
   pr: boolean
   maxRows: number
+  /** Blank lines above the first row, so the spinner doesn't sit on it. */
+  padTop: number
   /** Rows open when the person has never toggled one. */
   expanded: RowId[]
 }
@@ -59,6 +61,7 @@ export function parseConfig(raw: unknown): Config {
   const isRow = (r: string): r is RowId => (ROW_IDS as readonly string[]).includes(r)
   const picked = ids(u.rows)?.filter((r, i, a) => isRow(r) && a.indexOf(r) === i) as RowId[] | undefined
   const max = Number(u.maxRows)
+  const pad = Number(u.padTop)
   return {
     rows: (picked?.length ? picked : [...ROW_IDS]).filter((r) => !hide.has(r)),
     hide,
@@ -69,6 +72,7 @@ export function parseConfig(raw: unknown): Config {
     usageApi: u.usageApi !== false,
     pr: u.pr !== false,
     maxRows: Number.isFinite(max) && max > 0 ? Math.floor(max) : Infinity,
+    padTop: Number.isFinite(pad) && pad >= 0 ? Math.min(3, Math.floor(pad)) : 1,
     expanded: (ids(u.expanded) ?? []).filter(isRow),
   }
 }

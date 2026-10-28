@@ -34,6 +34,7 @@ The dashboard re-reads it every minute and at each session start; no restart.
 | `usageApi` | boolean | `true` | `false` never calls the usage API, so there are no model-scoped weekly gauges and no `Cr` gauge. |
 | `pr` | boolean | `true` | `false` never runs `gh` for the Repo row's PR badge. |
 | `maxRows` | positive integer | none | Caps the dashboard's height. It can only lower the built-in budget. |
+| `padTop` | integer 0–3 | `1` | Blank lines above the first row, between it and the spinner. Taken only from height the rows leave unused, so it never costs a row; `0` removes it. |
 
 **Row ids**, in the default order: `model`, `limits`, `usage`, `turn`, `activity`, `agents`,
 `repo`, `config`, `exts`, `host`, `info`.

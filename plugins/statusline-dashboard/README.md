@@ -167,7 +167,8 @@ The file lives outside the plugin, so updates and uninstalls never touch it.
   "clock": "12h",
   "usageApi": true,
   "pr": true,
-  "maxRows": 6
+  "maxRows": 6,
+  "padTop": 1
 }
 ```
 
@@ -183,6 +184,7 @@ The file lives outside the plugin, so updates and uninstalls never touch it.
 | `usageApi` | `true` | `false` never calls the usage API: no model-scoped weekly gauges and no `Cr` gauge. |
 | `pr` | `true` | `false` never runs `gh` for the Repo row's PR badge. |
 | `maxRows` | none | Caps the dashboard's height. It can only lower the built-in budget. |
+| `padTop` | `1` | Blank lines above the first row (0–3), so the spinner doesn't sit on it. Taken only from room the rows don't need. |
 
 Widget ids for `hide`:
 

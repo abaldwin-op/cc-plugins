@@ -501,6 +501,9 @@ export const register: Register = (on) => {
     }
     const laid = plan(sections, v.expanded, budget, width, indent)
     if (!laid.rows.length) return next(e)
+    // The padding only takes room the rows left over; it never costs a row or a fold.
+    const height = laid.rows.reduce((n, r) => n + r.lines.length, 0) + (laid.overflow.length ? 1 : 0)
+    const pad = Math.max(0, Math.min(cfg.padTop, budget - height))
 
     const { Box, Text, Button, Link } = $.ui.resolve(e)
     const runText = (r: Run, k: number) =>
@@ -554,6 +557,10 @@ export const register: Register = (on) => {
         </Box>,
       )
     }
-    return <Box flexDirection="column">{rows}</Box>
+    return (
+      <Box flexDirection="column" paddingTop={pad}>
+        {rows}
+      </Box>
+    )
   })
 }
