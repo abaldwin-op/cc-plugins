@@ -9,7 +9,7 @@ Native desktop notifications for [Claude Code](https://claude.com/product/claude
 
 When Claude finishes or needs input, you get a notification showing:
 
-- **Project directory** and **elapsed time** (e.g., "Task completed (12s)"), and on macOS the **session** — its `/rename` name, else the short session id
+- **Project directory** and **elapsed time** (e.g., "Task completed (12s)"), and on macOS the **session** — its `/rename` name, else the short session id. macOS titles it `<session> (<project>)`, the project being the repo the session is in now (the folder name outside git)
 - Clicking it (macOS) or the **Focus Terminal** button (Windows) focuses the originating **window/tab/pane**:
   - Windows Terminal: UI Automation switches to the correct tab (preserves snap/maximize layout)
   - Ghostty: the pane's terminal ID, found once per session by briefly tagging the pane's title through Claude's tty (so panes sharing a directory, or tabs dragged to another window, still resolve); raises the pane's window first, so a fullscreen Space or Stage Manager stage comes forward. Only without an ID (Ghostty `title` pinned in its config, tmux): CWD, when exactly one pane matches

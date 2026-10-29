@@ -785,6 +785,13 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
     let config = loadConfig(baseDir: baseDir)
     let elapsed = formatElapsed(nowMs() - startMs)
     let session = sessionLabel(sid: sid, transcriptPath: json["transcript_path"] as? String ?? "")
+    // Project: the repo the session is in NOW (it may have cd'd away from where it started), not a
+    // path, so the line stays short. Outside git, the folder's name.
+    let repoRoot = shell("git -C '\(escapeForShellSingleQuote(displayCwd))' rev-parse --show-toplevel 2>/dev/null")
+    let project = ((repoRoot.isEmpty ? displayCwd : repoRoot) as NSString).lastPathComponent
+    // One title line: the session leads; the parentheses keep the project readable as one unit
+    // when a long title wraps.
+    let heading = "\(session) (\(project))"
 
     let message: String
     if hookEvent == "stop" {
@@ -860,7 +867,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
     // Try native macOS notification first
     // Click body = focus terminal, action button = open editor
     let nativeOk = showNativeNotification(
-        title: dir, subtitle: session, body: body, groupId: groupId,
+        title: heading, subtitle: "", body: body, groupId: groupId,
         editorButtonTitle: editorButton,
         iconPath: FileManager.default.fileExists(atPath: iconPath) ? iconPath : nil,
         soundName: config.sound,
@@ -885,8 +892,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
             }
 
             var args = [
-                "-title", dir,
-                "-subtitle", session,
+                "-title", heading,
                 "-message", body,
                 "-group", groupId,
                 "-sender", senderBundleId,
@@ -925,7 +931,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
         } else {
             // Last resort: osascript (no click actions)
             let eMsg = escapeAppleScript("\(message) \(elapsed)")
-            let eDir = escapeAppleScript(dir)
+            let eDir = escapeAppleScript(heading)
             shell("osascript -e 'display notification \"\(eMsg)\" with title \"\(eDir)\"'")
         }
     }
