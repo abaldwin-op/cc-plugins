@@ -140,7 +140,7 @@ export const G = {
   cfgChrome: cp(0xf268), // nf-fa-chrome (FA exception; if blank use nf-md-google_chrome 0xf02af)
   cfgWorkflows: cp(0xf04aa), // nf-md-sitemap
   cfgRoutines: cp(0xf00f0), // nf-md-calendar_clock
-  cfgMemory: cp(0xf09d1), // nf-md-brain — auto-memory files
+  cfgMemory: cp(0xf1345), // nf-md-head_lightbulb_outline — auto-memory files
   github: cp(0xf02a4), // nf-md-github
   gitlab: cp(0xf0ba0), // nf-md-gitlab
   bitbucket: cp(0xf00a8), // nf-md-bitbucket
