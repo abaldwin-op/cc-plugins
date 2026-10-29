@@ -969,11 +969,12 @@ func focusTerminal(terminal: String, cwd: String, tty: String, terminalId: Strin
         // terminalId: the pane's terminal id (captureGhosttyId). State from older builds holds
         // "termId::tabId::windowId"; only the terminal id is used — window and tab ids change when a
         // tab is dragged to another window, which sent clicks to the wrong place.
-        // Order matters for fullscreen Spaces and Stage Manager: make the pane's window key FIRST
-        // (`activate window` deminiaturizes and orders it front), then activate the app, so macOS
-        // switches to the Space/stage of that window rather than of whichever Ghostty window was
-        // last active. System Events can't see Ghostty windows (GPU/Metal rendering), so this all
-        // goes through Ghostty's own dictionary.
+        // No app-level `activate` when the pane is found: activating Ghostty as a whole switches
+        // to the Space of its LAST-ACTIVE window, and with Displays-have-separate-Spaces that is
+        // often a window on the other monitor — before or after `activate window`, either order
+        // swiped the wrong display (or both). `activate window` / `focus` bring up only the pane's
+        // window. System Events can't see Ghostty windows (GPU/Metal rendering), so this all goes
+        // through Ghostty's own dictionary.
         let termId = escapeAppleScript(terminalId.components(separatedBy: "::")[0])
         osascript("""
             tell application "Ghostty"
@@ -987,7 +988,6 @@ func focusTerminal(terminal: String, cwd: String, tty: String, terminalId: Strin
                                         select tab tb
                                     end try
                                     focus t
-                                    activate
                                     return
                                 end if
                             end repeat
@@ -1018,8 +1018,9 @@ func focusTerminal(terminal: String, cwd: String, tty: String, terminalId: Strin
                 if n is 1 then
                     activate window hitW
                     focus hitT
+                else
+                    activate
                 end if
-                activate
             end tell
             """)
     case "iterm", "iterm2":
