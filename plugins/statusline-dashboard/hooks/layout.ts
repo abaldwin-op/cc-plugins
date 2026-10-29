@@ -380,9 +380,12 @@ export function bar(pct: number, color: string | undefined, width = 10): Run[] {
   return runs
 }
 
+// By code point, never UTF-16 unit: a cut through an emoji or a Nerd Font md glyph (both outside
+// the BMP, so surrogate pairs) leaves a lone surrogate, which reaches the terminal as U+FFFD.
 export function truncate(value: string, max: number): string {
   const s = String(value || '').replace(/\s+/g, ' ').trim()
-  return s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1))}…`
+  const cps = [...s]
+  return cps.length <= max ? s : `${cps.slice(0, Math.max(0, max - 1)).join('')}…`
 }
 
 /** `~/…` for paths under home, forward slashes. */

@@ -34,7 +34,7 @@ import {
   readJson,
   removeLegacy,
 } from './collect'
-import { ROW_IDS, SECTION_WIDTH, legendLines, plan, stackRuns, stripLabels, type Line, type RowId, type Run } from './layout'
+import { ROW_IDS, SECTION_WIDTH, legendLines, plan, stackRuns, stripLabels, truncate, type Line, type RowId, type Run } from './layout'
 import { buildSections, parseConfig } from './sections'
 
 const usage = atom({ plugin: 'statusline-dashboard', key: 'usage' } as const, null)
@@ -215,10 +215,7 @@ async function warnLegacy($: EngineInterface): Promise<void> {
 // ── activity ─────────────────────────────────────────────────────────────────────────────────────
 
 const base = (p: unknown) => String(p ?? '').replace(/\\/g, '/').split('/').pop() ?? ''
-const short = (s: unknown, n: number) => {
-  const t = String(s ?? '').replace(/\s+/g, ' ').trim()
-  return t.length <= n ? t : `${t.slice(0, n - 1)}…`
-}
+const short = (s: unknown, n: number) => truncate(String(s ?? ''), n)
 
 export function toolTarget(name: string, input: Record<string, unknown>): string | undefined {
   switch (name) {
@@ -465,6 +462,12 @@ export const register: Register = (on) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const v = await read($, view)
     if (e.props.hasSurvey || !v.isVisible) return next(e)
+    // The band draws ONE tree, and hooks beneath only run if we ask: answering without `next` hid
+    // every other mod's note here, the built-in you-should-know tips included (which then count
+    // each prompt sent past an unseen note as ignored and back off). Ask first; while something
+    // beneath draws, yield the band to it as to a survey. Nothing there is the engine's own node.
+    const below = await next(e)
+    if (below.type !== 'engine') return below
     const cfg = parseConfig(await read($, config))
     await read($, tick) // subscribe: the minute tick redraws the clock and countdowns
     const now = await $.clock.now()

@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 
 import { legacyKeys, parseApiUsage, parseChanged, parseGitStatus, parseLastCommit, parseRemote, parseTag } from '../hooks/collect'
 import { DROP_ORDER, ROW_IDS, bar, cells, legendLines, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, type Section } from '../hooks/layout'
-import { editLines, emptyActivity, mergeAgents, recordTool } from '../hooks/register'
+import { editLines, emptyActivity, mergeAgents, recordTool, toolTarget } from '../hooks/register'
 import { buildSections, parseConfig } from '../hooks/sections'
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────────────
@@ -73,8 +73,12 @@ const ok = (stdout: string) => ({ value: { exitCode: 0, stdout, stderr: '', isSt
 const fail = () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
 
 /** The engine beneath the mod: a session in /work, a git repo, an empty home. */
-function engine(on: On, files: Record<string, string> = {}, store: Record<string, unknown> = {}) {
+// `beneath` stands for whatever draws under the plugin in the band (another mod's note, a survey);
+// left out, or answering nothing, it is the engine's own node, which draws nothing there.
+type Beneath = ($: any, e: any) => unknown
+function engine(on: On, files: Record<string, string> = {}, store: Record<string, unknown> = {}, beneath?: Beneath) {
   const clock = mock.clock(on, { now: 3600e3 })
+  on('ui.render', ($, e) => (beneath?.($, e) ?? { type: 'engine', ref: 0 }) as never)
   on('store.get', ($, e) => ({ value: store[e.key] }))
   on('store.set', ($, e) => {
     store[e.key] = e.value
@@ -311,11 +315,13 @@ test('pressing a row label opens it, remembers it, and the Model row shows the c
   await ui.unmount()
 })
 
-test('/dash hides the band and shows it again; a survey wins over it', async ($, on) => {
-  const clock = engine(on)
-  on('ui.render', ($, e) => {
+test('/dash hides the band and shows it again; a survey or another mod\'s note wins over it', async ($, on) => {
+  // Beneath: another mod's note while one is up (the built-in tips), or a survey.
+  let note = false
+  const clock = engine(on, {}, {}, ($, e) => {
+    if (!note && !e.props.hasSurvey) return undefined
     const { Text } = $.ui.resolve(e)
-    return <Text>drawn by Claude Code</Text>
+    return <Text>drawn beneath</Text>
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
   await clock.settle()
@@ -323,18 +329,31 @@ test('/dash hides the band and shows it again; a survey wins over it', async ($,
   const hide = await $.command.run(dash(''))
   expect(hide.text).toMatch(/hidden/)
   let ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: 'drawn by Claude Code' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeUndefined()
   await ui.unmount()
 
   await $.command.run(dash('show'))
   ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'drawn beneath' })).toBeUndefined()
   await ui.unmount()
 
   ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, hasSurvey: true } })
-  expect(await ui.find({ type: 'Text', text: 'drawn by Claude Code' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'drawn beneath' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeUndefined()
   await ui.unmount()
+
+  note = true
+  ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'drawn beneath' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('truncation never splits an emoji or a Nerd Font glyph into a lone surrogate', () => {
+  const cut = toolTarget('Bash', { command: 'echo 🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉' }) ?? ''
+  expect(cut.endsWith('…')).toBe(true)
+  expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(cut)).toBe(false)
 })
 
 test('the user config picks the rows and their order', async ($, on) => {
