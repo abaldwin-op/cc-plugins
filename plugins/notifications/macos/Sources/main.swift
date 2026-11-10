@@ -539,7 +539,10 @@ func isPaneFocused(terminal: String, terminalId: String) -> Bool {
 }
 
 /// Calls `onSeen` (on the main queue, once) when the user is looking at the session's pane: its
-/// terminal app is frontmost and the pane is the focused one. A notification for a pane already
+/// terminal app is frontmost, the pane is the focused one and there was input in the last ten
+/// seconds, on two checks in a row (2 s apart). Focus alone isn't attention: passing through a
+/// pane on the way to another isn't looking at it, and a pane left focused while the user is away
+/// from the keyboard must keep its notification until they are back. A notification for a pane already
 /// on screen is noise, and one answered some other way (Herdr's own toast, cmd-tab) would
 /// otherwise sit there until the next prompt.
 ///
@@ -554,6 +557,7 @@ final class PaneWatch {
     private var timer: Timer?
     private var busy = false
     private var wasFront = false
+    private var sightings = 0
     private var lastView: Date?
     private var ticks = 0
     private let viewFile: String = {
@@ -580,11 +584,12 @@ final class PaneWatch {
 
     private func tick() {
         guard timer != nil, !busy else { return }
-        guard isTerminalFrontmost(terminal) else { wasFront = false; return }
+        guard isTerminalFrontmost(terminal), getIdleSeconds() < 10 else { wasFront = false; sightings = 0; return }
         ticks += 1
         if terminal.lowercased() == "herdr" {
             let view = (try? FileManager.default.attributesOfItem(atPath: viewFile))?[.modificationDate] as? Date
-            let unchanged = wasFront && view == lastView && ticks % 5 != 0
+            // A first sighting is confirmed on the next tick whether or not the view moved.
+            let unchanged = wasFront && view == lastView && ticks % 5 != 0 && sightings == 0
             lastView = view
             wasFront = true
             if unchanged { return }
@@ -597,7 +602,8 @@ final class PaneWatch {
             DispatchQueue.main.async {
                 guard let self = self, self.timer != nil else { return }
                 self.busy = false
-                if seen {
+                self.sightings = seen ? self.sightings + 1 : 0
+                if self.sightings >= 2 {
                     self.cancel()
                     self.onSeen()
                 }
@@ -784,8 +790,9 @@ func showNativeNotification(title: String, subtitle: String, body: String, group
         return true
     }
 
-    // Looking at the pane: the notification has done its job. Posted while already in view it
-    // stays up just long enough to read, as a banner would — it never sticks.
+    // Looking at the pane: the notification has done its job. Posted while the user is already
+    // there it stays up just long enough to read, as a banner would; posted to a focused pane
+    // nobody is at, it waits for them.
     let posted = Date()
     let paneWatch = PaneWatch(terminal: userInfo["terminal"] ?? "",
                               terminalId: userInfo["terminalId"] ?? "") {
@@ -925,7 +932,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
 
     // "Still waiting" for a pane the user is looking at is a nag: the turn's own notification
     // already showed there and left (PaneWatch), and this would pop it up again a minute later.
-    if notificationType == "idle_prompt", isTerminalFrontmost(terminal),
+    if notificationType == "idle_prompt", isTerminalFrontmost(terminal), getIdleSeconds() < 10,
        isPaneFocused(terminal: terminal, terminalId: terminalId) {
         return 0
     }
