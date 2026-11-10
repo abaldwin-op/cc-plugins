@@ -86,7 +86,7 @@ paint() { printf "$seq" > "$tty_dev" 2>/dev/null || true; }
 # SEEN: green and blue are for panes you aren't at. Once you are at one — its pane focused in the
 # frontmost window, with input in the last ten seconds, on two checks running (the second a
 # second after the first: 1–3 s from arriving) — it returns to the default background (never
-# sooner than four seconds after the turn finished, so the green is seen). Focus alone isn't attention: passing through a pane on the way to another doesn't clear
+# sooner than SEEN_AFTER seconds after the turn finished, so the green registers). Focus alone isn't attention: passing through a pane on the way to another doesn't clear
 # it, and a pane left focused while you're away keeps its tint (and cools to blue as usual) until
 # you're back at the keyboard. The notifications plugin clears its notification by the same test.
 #
@@ -224,6 +224,8 @@ at_keyboard() { # input within the last ten seconds
   [ "${idle:-999}" -lt 10 ]
 }
 
+SEEN_AFTER=10 # seconds a finished pane keeps its tint, however closely it is being watched
+
 watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
   memo="$SESSION_COLOR_MEMO"
   pane=$(own_pane)
@@ -244,8 +246,8 @@ watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     [ -z "$claude_pid" ] || kill -0 "$claude_pid" 2>/dev/null || return 0
     if frontmost && focused_pane "$nap" | grep -qxF "$pane" && at_keyboard; then hits=$((hits + 1)); else hits=0; fi
-    # two checks running: not just passing through; and the tint has had its 4 s on screen
-    [ "$hits" -ge 2 ] && [ "$t" -ge 4 ] || continue
+    # two checks running: not just passing through; and the tint has had its time on screen
+    [ "$hits" -ge 2 ] && [ "$t" -ge "$SEEN_AFTER" ] || continue
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     # `seen`, not removed: an agent's red must still have a lead state to fall back to, and every
     # implementation paints an unknown state as reset.
