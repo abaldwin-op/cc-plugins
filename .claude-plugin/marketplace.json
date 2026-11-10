@@ -23,7 +23,7 @@
     {
       "name": "agent-panel",
       "source": "./plugins/agent-panel",
-      "description": "Styles the agent panel's rows for sub-agents and agent-team teammates: name or type, live progress, model and effort, a coloured status glyph, elapsed time and tokens. Nothing written to your settings. Requires Bun.",
+      "description": "Styles the agent panel's rows for sub-agents and agent-team teammates: name or type, live progress, model and effort, a colored status glyph, elapsed time and tokens. Nothing written to your settings. Requires Bun.",
       "category": "productivity",
       "tags": [
         "subagent-statusline",

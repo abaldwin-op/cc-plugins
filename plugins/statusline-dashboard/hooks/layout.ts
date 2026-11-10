@@ -12,7 +12,7 @@ export type Run = {
   bg?: string
   b?: boolean
   i?: boolean
-  /** Drawn dim (the theme's dim colour): labels, punctuation, annotations. */
+  /** Drawn dim (the theme's dim color): labels, punctuation, annotations. */
   d?: boolean
   /** A link target (the PR badge); drawn as a Link where the surface has one. */
   href?: string
@@ -40,16 +40,16 @@ export type RowId = (typeof ROW_IDS)[number]
 export const SECTION_WIDTH = 8
 export const SEP: Run = { t: ' | ', d: true }
 
-// ── colours ──────────────────────────────────────────────────────────────────────────────────────
-// Semantic colours are THEME keys, so they follow the person's Claude Code theme (and read on the
-// desktop surface too); decorative per-widget hues keep the status line's 256-colour picks,
+// ── colors ──────────────────────────────────────────────────────────────────────────────────────
+// Semantic colors are THEME keys, so they follow the person's Claude Code theme (and read on the
+// desktop surface too); decorative per-widget hues keep the status line's 256-color picks,
 // converted to hex because a tree takes no ANSI.
 
 export const GOOD = 'success'
 export const WARN = 'warning'
 export const BAD = 'error'
 
-/** xterm's 256-colour palette entry as #rrggbb (the 16 system colours map to xterm's defaults). */
+/** xterm's 256-color palette entry as #rrggbb (the 16 system colors map to xterm's defaults). */
 export function c256(n: number): string {
   const sys = ['000000', '800000', '008000', '808000', '000080', '800080', '008080', 'c0c0c0', '808080', 'ff0000', '00ff00', 'ffff00', '0000ff', 'ff00ff', '00ffff', 'ffffff']
   if (n < 16) return `#${sys[n]}`
@@ -62,7 +62,7 @@ export function c256(n: number): string {
   return `#${step(Math.floor(i / 36))}${step(Math.floor(i / 6) % 6)}${step(i % 6)}`
 }
 
-/** Fill colour for quota use: neutral when low → warning ≥70 → error ≥90. */
+/** Fill color for quota use: neutral when low → warning ≥70 → error ≥90. */
 export function usageColor(p: number): string | undefined {
   return p >= 90 ? BAD : p >= 70 ? WARN : undefined
 }
@@ -369,7 +369,7 @@ export function pace(percentUsed: number, resetsAt: string | undefined, windowMs
  * A 10-cell gauge: the used part solid, the rest in the light shade the context bar uses for free
  * space. Whole cells only — an eighth-block partial (▏▎▍…) leaves most of its cell blank, which
  * reads as a gap between the fill and the track — and at least one cell for any use above 0%. No
- * background colour: a painted track drew as a pale box on any terminal background but near-black.
+ * background color: a painted track drew as a pale box on any terminal background but near-black.
  */
 export function bar(pct: number, color: string | undefined, width = 10): Run[] {
   const p = Math.max(0, Math.min(100, pct))
@@ -416,7 +416,7 @@ export function shortenPath(p: string, max = 40): string {
 
 // ── the context breakdown (was the context-bar plugin) ───────────────────────────────────────────
 // The status line only ever got the window's total; the per-category breakdown is a mods-API call,
-// so the Model row's open view adds it: one stacked bar, one colour per category as /context
+// so the Model row's open view adds it: one stacked bar, one color per category as /context
 // draws them, then a legend.
 
 
@@ -460,7 +460,7 @@ export function stackRuns(categories: readonly Segment[], width: number): Run[] 
   return stack(categories, width).map((seg) => ({ t: glyphFor(seg.kind).repeat(seg.cells), c: seg.color }))
 }
 
-/** Legend lines (`name NN%` in each category's colour), wrapped at `width`, at most `maxLines`. */
+/** Legend lines (`name NN%` in each category's color), wrapped at `width`, at most `maxLines`. */
 export function legendLines(categories: readonly Segment[], maxTokens: number, width: number, maxLines = 2): Run[][] {
   const entries = categories
     .filter((c) => c.kind !== 'deferred' && c.tokens > 0)

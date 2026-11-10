@@ -379,7 +379,7 @@ export function parseApiUsage(u: any, now: number): ApiUsage {
   const scoped: ApiUsage['scoped'] = []
   // The modern `limits` array: `weekly_scoped` entries are per-model caps, each on its own 0-100%
   // scale; `session` / `weekly_all` duplicate the 5h / 7d windows the session already reports.
-  // Labelled 7d + the model's initial (Fable → 7dF).
+  // Labeled 7d + the model's initial (Fable → 7dF).
   for (const l of Array.isArray(u?.limits) ? u.limits : []) {
     if (l?.kind !== 'weekly_scoped') continue
     const name = String(l.scope?.model?.display_name || l.scope?.surface || '').trim()

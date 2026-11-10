@@ -81,7 +81,7 @@ key must be declared in `types/index.d.ts`.
   to the newest open row before it is cut. Nothing scrolls; nothing is unreachable.
 - **Adding a row** = a builder in `sections.ts`, an id in `ROW_IDS` and `DROP_ORDER`, the README
   row list and table, and the configure skill.
-- Glyphs only on the `terminal` surface (desktop has no Nerd Font); semantic colours are theme
+- Glyphs only on the `terminal` surface (desktop has no Nerd Font); semantic colors are theme
   keys (`success`/`warning`/`error`), decorative hues `c256(n)` → hex. Before adding a hue, grep
   `c256(` to confirm it's unused.
 

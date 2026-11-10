@@ -149,7 +149,7 @@ export const G = {
 export const OK = '✔︎' // ✔︎ + text-presentation selector (never emoji)
 export const NO = '✘︎' // ✘︎
 
-// Decorative hues (the status line's 256-colour picks; semantic colours are theme keys).
+// Decorative hues (the status line's 256-color picks; semantic colors are theme keys).
 const PINK = c256(211)
 const PENCIL = c256(220)
 const ORANGE = c256(216)
@@ -281,7 +281,7 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
   return lines
 }
 
-// The last commit and the first changed paths, coloured like the branch counts.
+// The last commit and the first changed paths, colored like the branch counts.
 function repoDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
   const r = x.repo
   if (!r || !on('repo.files')) return []
@@ -662,7 +662,7 @@ function infoRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
   if (i.outputStyle && i.outputStyle.toLowerCase() !== 'default' && on('info.style')) items.push(plain([...icon(G.style, PENCIL), v(i.outputStyle)]))
   if (i.version && on('info.version')) items.push(plain([...icon(G.version), v(`v${i.version}`)]))
   if (i.agent && on('info.agent')) items.push(plain([...icon(G.user, SILVER), v(i.agent)]))
-  // The id's first segment is enough to recognise it; `claude --resume` takes the whole id.
+  // The id's first segment is enough to recognize it; `claude --resume` takes the whole id.
   if (i.sessionId && on('info.session')) items.push(plain([...icon(G.key, SILVER), v(i.sessionId.split('-')[0] ?? i.sessionId)]))
   return { id: 'info', label: 'Info.', items }
 }

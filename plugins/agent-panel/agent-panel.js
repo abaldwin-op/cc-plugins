@@ -2,7 +2,7 @@
 // agent-panel — implements Claude Code's `subagentStatusLine` setting: a custom row body for each
 // sub-agent AND agent-team teammate in the agent panel below the prompt, replacing the default
 // `name · description · token count` with: icon (robot for a sub-agent, person for a teammate), name
-// or type, live progress, model + effort, a status glyph coloured by state, elapsed time, tokens.
+// or type, live progress, model + effort, a status glyph colored by state, elapsed time, tokens.
 //
 // Input (one JSON object on stdin): the base hook fields plus `columns` (usable row width) and a
 // `tasks` array; each task has { id, name, type, agentType, status, description, label, startTime,

@@ -55,7 +55,7 @@ it's up.
   bars, and Config keeps its `(m/u/p/l/x)` breakdowns. Some rows add what a single line has no
   room for:
   - **Model**: the context window broken down by category, as `/context` shows it — a stacked
-    bar, one colour per category, and a legend.
+    bar, one color per category, and a legend.
   - **Turn**: the last five turns — duration, output, input and how much of it came from the cache.
   - **Activity**: the todo list around the current item, and the last five tool calls, one per
     line with what each acted on (✔ answered, ✘ failed, … running; repeats collapse to `×n`).

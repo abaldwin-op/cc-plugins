@@ -20,7 +20,7 @@ export type Usage = {
 export type Segment = {
   name: string
   tokens: number
-  /** A theme colour key (`promptBorder`, `inactive`, …): what /context draws the row in. */
+  /** A theme color key (`promptBorder`, `inactive`, …): what /context draws the row in. */
   color: string
   kind: 'used' | 'free' | 'buffer' | 'deferred'
 }
