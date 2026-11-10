@@ -79,9 +79,9 @@ done
 printf "$seq" > "$tty_dev" 2>/dev/null || true
 
 # SEEN: green and blue are for panes you aren't at. Once you are at one — its pane focused in the
-# frontmost window, with input in the last ten seconds, on two checks running — it returns to the
-# default background (never sooner than a few seconds after the turn finished, so the green is
-# seen). Focus alone isn't attention: passing through a pane on the way to another doesn't clear
+# frontmost window, with input in the last ten seconds, on two checks running (the second a
+# second after the first: 1–3 s from arriving) — it returns to the default background (never
+# sooner than four seconds after the turn finished, so the green is seen). Focus alone isn't attention: passing through a pane on the way to another doesn't clear
 # it, and a pane left focused while you're away keeps its tint (and cools to blue as usual) until
 # you're back at the keyboard. The notifications plugin clears its notification by the same test.
 #
@@ -197,10 +197,10 @@ frontmost() { # is our terminal app the one in front?
 # focused_pane: the focused pane(s) of the frontmost window, one per line, shared between
 # watchers (see COST). Only called while the app is frontmost, so `tell application` never
 # launches one.
-focused_pane() {
+focused_pane() { # focused_pane <max age, seconds>
   cache="$tmp/session-color-focus-$pane_kind"
   age=$(( $(date +%s) - $(stat -f %m "$cache" 2>/dev/null || echo 0) ))
-  if [ "$age" -ge 2 ] || [ "$age" -lt 0 ]; then
+  if [ "$age" -ge "$1" ] || [ "$age" -lt 0 ]; then
     touch "$cache" 2>/dev/null # claim it: watchers waking in the same instant read the last answer
     case "$pane_kind" in
       herdr) "$cli" status | sed -n 's/.*"focused_pane": *"\([^"]*\)".*/\1/p' ;;
@@ -223,14 +223,16 @@ watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
   memo="$SESSION_COLOR_MEMO"
   pane=$(own_pane)
   [ -n "$pane" ] || return 0
-  hits=0; n=0
-  while [ "$n" -lt 43200 ]; do # a day, at most
-    sleep 2; n=$((n + 1))
+  hits=0; t=0
+  while [ "$t" -lt 86400 ]; do # a day, at most
+    # A first sighting is confirmed a second later, on an answer newer than the first.
+    if [ "$hits" -gt 0 ]; then nap=1; else nap=2; fi
+    sleep "$nap"; t=$((t + nap))
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     [ -z "$claude_pid" ] || kill -0 "$claude_pid" 2>/dev/null || return 0
-    if frontmost && focused_pane | grep -qxF "$pane" && at_keyboard; then hits=$((hits + 1)); else hits=0; fi
-    # two checks running: not just passing through; third tick: the tint has had ~6 s on screen
-    [ "$hits" -ge 2 ] && [ "$n" -ge 3 ] || continue
+    if frontmost && focused_pane "$nap" | grep -qxF "$pane" && at_keyboard; then hits=$((hits + 1)); else hits=0; fi
+    # two checks running: not just passing through; and the tint has had its 4 s on screen
+    [ "$hits" -ge 2 ] && [ "$t" -ge 4 ] || continue
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     # `seen`, not removed: an agent's red must still have a lead state to fall back to, and every
     # implementation paints an unknown state as reset.

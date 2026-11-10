@@ -571,7 +571,8 @@ func isPaneFocused(terminal: String, terminalId: String) -> Bool {
 
 /// Calls `onSeen` (on the main queue, once) when the user is looking at the session's pane: its
 /// terminal app is frontmost, the pane is the focused one and there was input in the last ten
-/// seconds, on two checks in a row (2 s apart). Focus alone isn't attention: passing through a
+/// seconds, on two checks in a row (the second a second after the first: 1–3 s from arriving).
+/// Focus alone isn't attention: passing through a
 /// pane on the way to another isn't looking at it, and a pane left focused while the user is away
 /// from the keyboard must keep its notification until they are back. A notification for a pane already
 /// on screen is noise, and one answered some other way (Herdr's own toast, cmd-tab) would
@@ -639,6 +640,9 @@ final class PaneWatch {
                 if self.sightings >= 2 {
                     self.cancel()
                     self.onSeen()
+                } else if self.sightings == 1 {
+                    // Confirm in a second rather than at the next 2 s tick.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
                 }
             }
         }
@@ -831,7 +835,7 @@ func showNativeNotification(title: String, subtitle: String, body: String, group
                               terminalId: paneKey(terminal: userInfo["terminal"] ?? "",
                                                   terminalId: userInfo["terminalId"] ?? "",
                                                   tty: userInfo["tty"] ?? "")) {
-        let wait = max(0, 5 - Date().timeIntervalSince(posted))
+        let wait = max(0, 4 - Date().timeIntervalSince(posted))
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
             center.removeDeliveredNotifications(withIdentifiers: [groupId])
             stopApp()
