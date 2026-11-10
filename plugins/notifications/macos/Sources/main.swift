@@ -923,6 +923,13 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
     let projectRoot = timer.count > 6 ? timer[6] : ""
     let claudePid = timer.count > 7 ? Int32(timer[7]) ?? 0 : 0
 
+    // "Still waiting" for a pane the user is looking at is a nag: the turn's own notification
+    // already showed there and left (PaneWatch), and this would pop it up again a minute later.
+    if notificationType == "idle_prompt", isTerminalFrontmost(terminal),
+       isPaneFocused(terminal: terminal, terminalId: terminalId) {
+        return 0
+    }
+
     // Use jsonCwd for title (shows where Claude is NOW), timer CWD for focus
     let displayCwd = jsonCwd ?? timerCwd
     let focusCwd = timerCwd.isEmpty ? (jsonCwd ?? "") : timerCwd
