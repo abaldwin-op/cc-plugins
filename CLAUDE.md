@@ -120,7 +120,11 @@ Status-driven terminal background tint. `hooks/hooks.json` maps eleven events to
 words (`working` / `needs` / `done` / `failed` / `idle` / `reset`). `failed` (orange) is `StopFailure`: the turn
 ended on an API error. `idle` (blue: done, gone cold) comes from
 `Notification` matched to `idle_prompt`, and the dispatcher lets it through only when the lead's
-remembered state is `done`. The dispatcher shows the LEAD's state: events
+remembered state is `done`. On macOS a done pane gets a detached watcher
+(`watch_seen` in `macos/session-color.sh`) that resets it to the default background, memo `seen`,
+once the user comes back to it; it lives only while the memo says `done` or `idle` (pid in `<memo>.watch`).
+Per terminal it needs `own_pane` and `focused_pane` (Herdr, iTerm2, Terminal.app, WezTerm, Ghostty — the
+table in the README; not tmux); the focused-pane answer is shared between watchers through a 2 s file. The dispatcher shows the LEAD's state: events
 carrying `agent_id` (sub-agents, in-process teammates) paint only `needs`, and their next `working`
 restores the lead's last state (remembered per session in `$TMPDIR/session-color-<session_id>`).
 The macOS/Linux tty walk stops at the nearest `claude` process (no tty there → paint nothing), so a

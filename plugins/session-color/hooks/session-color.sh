@@ -57,7 +57,7 @@ if [ -n "$session" ]; then
       [ -f "$memo.agent-needs" ] && { printf idle > "$memo" 2>/dev/null; exit 0; } # under an agent's red
     fi
     rm -f "$memo.agent-needs" 2>/dev/null
-    if [ "$state" = reset ]; then rm -f "$memo" 2>/dev/null; else printf '%s' "$state" > "$memo" 2>/dev/null; fi
+    if [ "$state" = reset ]; then rm -f "$memo" "$memo.watch" "$memo.pane" 2>/dev/null; else printf '%s' "$state" > "$memo" 2>/dev/null; fi
   fi
 fi
 
@@ -72,7 +72,11 @@ case "$(uname -s 2>/dev/null)" in
     [ -n "$data" ] && [ -f "$exe" ] || exit 0
     exec "$exe" "$state"
     ;;
-  Darwin) exec sh "$here/macos/session-color.sh" "$state" ;;
+  Darwin)
+    # The macOS implementation's seen-watcher follows the session's state through the memo.
+    [ -n "$session" ] && export SESSION_COLOR_MEMO="$memo"
+    exec sh "$here/macos/session-color.sh" "$state"
+    ;;
   Linux)  exec sh "$here/linux/session-color.sh" "$state" ;;
 esac
 exit 0

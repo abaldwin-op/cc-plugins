@@ -19,6 +19,20 @@ It flips **back** to amber after a red prompt (via `PostToolUse`), so a session 
 
 A finished session doesn't stay green forever: Claude Code's `idle_prompt` notification (about 60s after a turn ends with no input) cools it to blue — **done, but cold**. Green therefore means *just* finished. Orange stays orange: a turn that died is not "done", so it never cools to blue and waits for you to retry. Blue only ever follows green: the dispatcher ignores an `idle_prompt` that arrives in any other state, and the next prompt turns the pane amber as usual.
 
+On macOS, green and blue also clear once you've **come back** to the pane: it was out of view at some point since the turn finished, and has then been the focused pane of the frontmost window for a few seconds (passing through it doesn't count). The pane returns to the default background. A pane that stayed focused the whole time keeps its tint and cools to blue as usual.
+
+Hooks can't see focus, so a finished pane gets a small detached watcher that lives only while the pane is green or blue. It needs the terminal to say which pane is the session's and which is focused:
+
+| Terminal | Session's pane | Focused pane |
+|---|---|---|
+| [Herdr](https://herdr.dev/) | `HC_TERMINAL_ID` → its pane, from `herdr-app ls` | `herdr-app status` |
+| iTerm2 | `ITERM_SESSION_ID` | AppleScript |
+| Terminal.app | the tab's tty | AppleScript |
+| WezTerm | `WEZTERM_PANE` | `wezterm cli list-clients` |
+| Ghostty | none in the environment, so the pane names itself once per session: a title carrying a nonce is written to its tty, and the terminal showing it is ours (a brief title flicker; a `title` pinned in Ghostty's config defeats it) | AppleScript |
+
+Nothing is asked unless that terminal is the frontmost app, and the answer is shared between watchers — one query per two seconds however many panes are waiting. Inside tmux (the pane is tmux's; the outer terminal can't say which one is showing), in other terminals, and on Linux and Windows, the tint stays until the next prompt. The AppleScript queries may prompt once for permission to control the terminal.
+
 Red is reserved for *actual* blocking decisions (`PermissionRequest`, `Elicitation`). Of the `Notification` event's types only `idle_prompt` is wired: `permission_prompt`, `elicitation_*` and `auth_success` are each already covered by a more specific event above, so coloring on them adds nothing but conflicts.
 
 ## Install
