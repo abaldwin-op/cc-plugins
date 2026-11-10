@@ -494,16 +494,22 @@ func captureTerminalId(_ terminal: String, tty: String) -> String {
 /// Whether `terminal`'s app is the one the user is in. Free: no process, no Apple event.
 func isTerminalFrontmost(_ terminal: String) -> Bool {
     guard let front = NSWorkspace.shared.frontmostApplication else { return false }
-    switch terminal.lowercased() {
-    case "herdr": return front.processIdentifier == herdrApp()?.processIdentifier
-    case "ghostty": return front.bundleIdentifier == "com.mitchellh.ghostty"
-    default: return false
-    }
+    // Herdr started through its `herdr-app` symlink has no bundle identifier.
+    if terminal.lowercased() == "herdr" { return front.processIdentifier == herdrApp()?.processIdentifier }
+    guard let bundleId = terminalBundleId(terminal) else { return false }
+    return front.bundleIdentifier == bundleId
 }
 
-/// Whether the session's pane is the focused one in its terminal's front window. Costs a process
-/// (Herdr's CLI ~70 ms, osascript ~140 ms), so PaneWatch asks only while the app is frontmost.
-/// Terminals we can't ask, and panes we hold no id for, are never "in view".
+/// What identifies the session's pane to its terminal when asking which pane is focused: the id
+/// captured at on-submit, or for Terminal.app (no panes, no ids) the tab's tty.
+func paneKey(terminal: String, terminalId: String, tty: String) -> String {
+    terminal.lowercased() == "terminal" ? tty : terminalId
+}
+
+/// Whether the session's pane (`paneKey`) is the focused one in its terminal's front window. Costs
+/// a process (Herdr's CLI ~70 ms, osascript ~140 ms), so PaneWatch asks only while the app is
+/// frontmost — which also means `tell application` never launches one. Terminals we can't ask,
+/// and panes we hold no key for, are never "in view".
 func isPaneFocused(terminal: String, terminalId: String) -> Bool {
     guard !terminalId.isEmpty else { return false }
     switch terminal.lowercased() {
@@ -533,6 +539,31 @@ func isPaneFocused(terminal: String, terminalId: String) -> Bool {
                 return ""
             end tell
             """) == id
+    case "iterm", "iterm2":
+        return osascript("""
+            tell application "iTerm2"
+                try
+                    return id of current session of current tab of current window
+                end try
+                return ""
+            end tell
+            """) == terminalId
+    case "terminal":
+        return osascript("""
+            tell application "Terminal"
+                try
+                    return tty of selected tab of front window
+                end try
+                return ""
+            end tell
+            """) == terminalId
+    case "wezterm":
+        // One entry per attached client (GUI window process); ours is focused if any shows it.
+        guard let pane = Int(terminalId),
+              let clients = try? JSONSerialization.jsonObject(
+                with: Data(shell("wezterm cli list-clients --format json").utf8)) as? [[String: Any]]
+        else { return false }
+        return clients.contains { $0["focused_pane_id"] as? Int == pane }
     default:
         return false
     }
@@ -567,7 +598,9 @@ final class PaneWatch {
     }()
 
     init?(terminal: String, terminalId: String, onSeen: @escaping () -> Void) {
-        guard !terminalId.isEmpty, ["herdr", "ghostty"].contains(terminal.lowercased()) else { return nil }
+        guard !terminalId.isEmpty,
+              ["herdr", "ghostty", "iterm", "iterm2", "terminal", "wezterm"].contains(terminal.lowercased())
+        else { return nil }
         self.terminal = terminal
         self.terminalId = terminalId
         self.onSeen = onSeen
@@ -795,7 +828,9 @@ func showNativeNotification(title: String, subtitle: String, body: String, group
     // nobody is at, it waits for them.
     let posted = Date()
     let paneWatch = PaneWatch(terminal: userInfo["terminal"] ?? "",
-                              terminalId: userInfo["terminalId"] ?? "") {
+                              terminalId: paneKey(terminal: userInfo["terminal"] ?? "",
+                                                  terminalId: userInfo["terminalId"] ?? "",
+                                                  tty: userInfo["tty"] ?? "")) {
         let wait = max(0, 5 - Date().timeIntervalSince(posted))
         DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
             center.removeDeliveredNotifications(withIdentifiers: [groupId])
@@ -933,7 +968,8 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
     // "Still waiting" for a pane the user is looking at is a nag: the turn's own notification
     // already showed there and left (PaneWatch), and this would pop it up again a minute later.
     if notificationType == "idle_prompt", isTerminalFrontmost(terminal), getIdleSeconds() < 10,
-       isPaneFocused(terminal: terminal, terminalId: terminalId) {
+       isPaneFocused(terminal: terminal,
+                     terminalId: paneKey(terminal: terminal, terminalId: terminalId, tty: tty)) {
         return 0
     }
 
