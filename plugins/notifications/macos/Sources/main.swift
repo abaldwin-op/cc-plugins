@@ -571,7 +571,8 @@ func isPaneFocused(terminal: String, terminalId: String) -> Bool {
 
 /// Calls `onSeen` (on the main queue, once) when the user is looking at the session's pane: its
 /// terminal app is frontmost, the pane is the focused one and there was input in the last ten
-/// seconds, on two checks in a row (the second a second after the first: 1–3 s from arriving).
+/// seconds, on two checks in a row (a second apart: 1–2 s from arriving, in step with
+/// session-color's tint).
 /// Focus alone isn't attention: passing through a
 /// pane on the way to another isn't looking at it, and a pane left focused while the user is away
 /// from the keyboard must keep its notification until they are back. A notification for a pane already
@@ -581,7 +582,7 @@ func isPaneFocused(terminal: String, terminalId: String) -> Bool {
 /// Kept light on purpose — a notifier per waiting session runs this for as long as its
 /// notification is up. Each tick is only the frontmost test; the pane is asked about just while
 /// its app is frontmost, and for Herdr only when its view file changed (Herdr rewrites view.json
-/// on every space/tab/pane switch) or every fifth tick, in case a write was missed.
+/// on every space/tab/pane switch) or every tenth tick (10 s), in case a write was missed.
 final class PaneWatch {
     private let terminal: String
     private let terminalId: String
@@ -605,7 +606,7 @@ final class PaneWatch {
         self.terminal = terminal
         self.terminalId = terminalId
         self.onSeen = onSeen
-        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.tick() }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
         tick()
@@ -623,7 +624,7 @@ final class PaneWatch {
         if terminal.lowercased() == "herdr" {
             let view = (try? FileManager.default.attributesOfItem(atPath: viewFile))?[.modificationDate] as? Date
             // A first sighting is confirmed on the next tick whether or not the view moved.
-            let unchanged = wasFront && view == lastView && ticks % 5 != 0 && sightings == 0
+            let unchanged = wasFront && view == lastView && ticks % 10 != 0 && sightings == 0
             lastView = view
             wasFront = true
             if unchanged { return }
@@ -640,9 +641,6 @@ final class PaneWatch {
                 if self.sightings >= 2 {
                     self.cancel()
                     self.onSeen()
-                } else if self.sightings == 1 {
-                    // Confirm in a second rather than at the next 2 s tick.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
                 }
             }
         }
