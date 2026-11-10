@@ -14,6 +14,7 @@ When Claude finishes or needs input, you get a notification showing:
   - Windows Terminal: UI Automation switches to the correct tab (preserves snap/maximize layout)
   - Ghostty: the pane's terminal ID, found once per session by briefly tagging the pane's title through Claude's tty (so panes sharing a directory, or tabs dragged to another window, still resolve); raises the pane's window first, so a fullscreen Space or Stage Manager stage comes forward. Only without an ID (Ghostty `title` pinned in its config, tmux): CWD, when exactly one pane matches
   - iTerm2: session ID → CWD+name → prefix CWD · WezTerm: pane ID via CLI · Terminal.app: tty → process name
+  - [Herdr](https://herdr.dev/): the terminal's herdr-core address (`$HC_TERMINAL_ID`) → `herdr-app do` selects its space and tab and focuses its pane (a sub-agent without a pane is shown with `agent.focus`), then the window comes forward. Herdr's own toasts stay inside its window; this is the one you see from another app
 - **Open in Editor** button — opens the project directory in your configured editor
 - Notifications replace by session (no stacking), and go away with their session: SessionEnd clears them, and a session that dies without one (pane closed, crash) is noticed by its waiting notifier and swept on the next notification. Clicking one whose session is gone does nothing rather than focus a wrong pane (macOS)
 - Optional **webhook** — JSON POST to Discord, Slack, ntfy, Gotify… when you're AFK (screen locked / idle)
@@ -82,7 +83,7 @@ Setup seeds `config.json` (from `config.json.example`) in **`~/.claude/notificat
 | Field | Description |
 |-------|-------------|
 | `title` | Name shown in the notification attribution (macOS bundle name / Windows AUMID display name) |
-| `terminal` | macOS only: terminal to focus on click (`ghostty`, `iterm2`, `wezterm`, `terminal`). Windows focuses Windows Terminal. |
+| `terminal` | macOS only: terminal to focus on click (`ghostty`, `iterm2`, `wezterm`, `terminal`, `herdr`). Only the default: a session whose environment names its terminal (`HC_TERMINAL_ID` for Herdr, else `TERM_PROGRAM`) uses that one, so one config serves sessions in several terminals. Windows focuses Windows Terminal. |
 | `editor` | Editor to open projects in (`zed`, `code`, `cursor`) |
 | `desktop` | Set to `false` to skip desktop notifications (webhook-only mode) |
 | `sound` | `"default"`, a sound name, or `""` to disable. macOS: `/System/Library/Sounds` names (`Basso`, `Blow`, `Glass`, `Ping`, `Pop`, `Purr`, `Sosumi`, …) or a `.aiff`/`.wav`/`.caf` in `~/Library/Sounds/`. Windows: `Default`, `IM`, `Mail`, `Reminder`, `SMS` (`ms-winsoundevent:Notification.{name}`). |

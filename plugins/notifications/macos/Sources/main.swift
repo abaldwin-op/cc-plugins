@@ -8,7 +8,8 @@
 //                dispatches to focus or editor-open. Replaces by session ID.
 //                Falls back to terminal-notifier, then osascript.
 //   focus      — Focuses the correct terminal window/tab/pane using AppleScript.
-//                Supports Ghostty (by terminal id), iTerm2 (by session id), Terminal.app (by tty).
+//                Supports Ghostty (by terminal id), iTerm2 (by session id), Terminal.app (by tty),
+//                Herdr (by herdr-core terminal address).
 //   on-end     — SessionEnd hook. Cleans up temp files and the session's notification.
 //   (no args)  — LaunchServices relaunching the bundle for a click on a notification whose
 //                poster has exited: handles that click from the notification's userInfo.
@@ -17,7 +18,8 @@
 //
 // Config: ~/.claude/notifications/config.json (see baseDir below; falls back to walking up from
 //         the binary). See config.json.example.
-//   terminal: "ghostty" | "iterm2" | "terminal" (app to focus on click)
+//   terminal: "ghostty" | "iterm2" | "terminal" | "wezterm" | "herdr" (app to focus on click;
+//             only the default — the terminal the session's environment names wins)
 //   editor:   "zed" | "code" | "cursor" (app to open project in)
 //
 // State: /tmp/claude-timer-{session_id}.txt (pipe-delimited session data, incl. Claude's PID)
@@ -165,6 +167,7 @@ func terminalAppName(_ terminal: String) -> String {
     case "iterm", "iterm2": return "iTerm2"
     case "terminal": return "Terminal"
     case "wezterm": return "WezTerm"
+    case "herdr": return "Herdr"
     default: return terminal
     }
 }
@@ -213,8 +216,28 @@ func osascript(_ script: String) -> String {
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 }
 
+/// The terminal this session says it is in, from its environment, or nil when that names none we
+/// focus (an IDE's terminal, tmux, nothing).
+///
+/// Herdr first: its terminals are children of the herdr-core daemon, not of any terminal app, so
+/// the process walk below finds nothing, and they inherit TERM_PROGRAM (and GHOSTTY_*) from
+/// whatever shell first started the daemon — a pane in Herdr can claim to be Ghostty.
+/// HC_TERMINAL_ID is set by herdr-core itself, per terminal.
+func terminalFromEnvironment() -> String? {
+    let env = ProcessInfo.processInfo.environment
+    if !(env["HC_TERMINAL_ID"] ?? "").isEmpty { return "herdr" }
+    switch env["TERM_PROGRAM"] ?? "" {
+    case "ghostty": return "ghostty"
+    case "iTerm.app": return "iterm2"
+    case "Apple_Terminal": return "terminal"
+    case "WezTerm": return "wezterm"
+    default: return nil
+    }
+}
+
 /// Walks the process tree to check if a known terminal emulator is an ancestor.
 /// Returns false if running inside an IDE (Zed, VS Code, Cursor, etc.).
+/// The fallback for when the environment names no terminal (TERM_PROGRAM=tmux, or unset).
 func isRunningInTerminal(_ terminal: String) -> Bool {
     let knownTerminals = ["ghostty", "iterm2", "terminal", "wezterm"]
     var pid = ProcessInfo.processInfo.processIdentifier
@@ -441,7 +464,8 @@ func captureGhosttyId(tty: String) -> String {
 }
 
 /// Captures terminal identifiers for pane-level focus restoration.
-/// Returns the terminal id for Ghostty, session ID for iTerm2, pane ID for WezTerm.
+/// Returns the terminal id for Ghostty, session ID for iTerm2, pane ID for WezTerm, the
+/// herdr-core terminal address for Herdr.
 func captureTerminalId(_ terminal: String, tty: String) -> String {
     switch terminal.lowercased() {
     case "ghostty":
@@ -453,6 +477,10 @@ func captureTerminalId(_ terminal: String, tty: String) -> String {
     case "wezterm":
         // $WEZTERM_PANE is set by WezTerm in each pane's environment
         return ProcessInfo.processInfo.environment["WEZTERM_PANE"] ?? ""
+    case "herdr":
+        // The terminal's address in herdr-core ("t7"); it lasts as long as the terminal, wherever
+        // its pane is moved.
+        return ProcessInfo.processInfo.environment["HC_TERMINAL_ID"] ?? ""
     case "terminal":
         // Terminal.app doesn't have split panes — tty is sufficient
         return ""
@@ -665,9 +693,12 @@ func onSubmit(baseDir: String) -> Int32 {
     else { return 1 }
 
     let config = loadConfig(baseDir: baseDir)
-    let terminal = config.terminal ?? "ghostty"
+    // config.terminal is the default, for sessions whose environment doesn't say (tmux): one
+    // config serves sessions in several terminals.
+    let detected = terminalFromEnvironment()
+    let terminal = detected ?? config.terminal ?? "ghostty"
 
-    let inTerminal = isRunningInTerminal(terminal)
+    let inTerminal = detected != nil || isRunningInTerminal(terminal)
 
     let jsonCwd = json["cwd"] as? String ?? FileManager.default.currentDirectoryPath
 
@@ -888,6 +919,7 @@ func notify(hookEvent: String, baseDir: String) -> Int32 {
             case "ghostty": senderBundleId = "com.mitchellh.ghostty"
             case "iterm", "iterm2": senderBundleId = "com.googlecode.iterm2"
             case "terminal": senderBundleId = "com.apple.Terminal"
+            case "herdr": senderBundleId = "dev.herdr.app"
             default: senderBundleId = "com.mitchellh.ghostty"
             }
 
@@ -955,6 +987,63 @@ func terminalBundleId(_ terminal: String) -> String? {
     case "wezterm": return "com.github.wez.wezterm"
     default: return nil
     }
+}
+
+/// The running Herdr window's process. Herdr is usually started through its `herdr-app` symlink,
+/// which leaves the process without a bundle identifier — hence the match on the bundle's path.
+func herdrApp() -> NSRunningApplication? {
+    NSWorkspace.shared.runningApplications.first {
+        $0.bundleIdentifier == "dev.herdr.app" || $0.bundleURL?.lastPathComponent == "Herdr.app"
+    }
+}
+
+/// Runs an executable with arguments (no shell) and returns stdout.
+@discardableResult
+func run(_ executable: URL, _ arguments: [String]) -> String {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = executable
+    process.arguments = arguments
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return "" }
+    let out = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(data: out, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+}
+
+/// Shows the pane of herdr-core terminal `address` in the Herdr window and brings the window up.
+///
+/// Herdr is driven through its own CLI — the running app's executable is that CLI, and talks to
+/// the open window over its socket (a click delivered to a relaunched bundle has no PATH to find
+/// `herdr-app` on). `pane.focus` alone only moves focus within what is shown, so the terminal's
+/// space and tab are selected first, from `ls`. A terminal with no pane (a sub-agent running
+/// under its parent) isn't in `ls`; `agent.focus` shows those.
+func focusHerdr(address: String) {
+    guard let app = herdrApp() else { return }
+    if #available(macOS 14.0, *) { NSApplication.shared.yieldActivation(to: app) }
+    if !address.isEmpty, let cli = app.executableURL {
+        var shown = false
+        if let data = run(cli, ["ls"]).data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            search: for space in root["spaces"] as? [[String: Any]] ?? [] {
+                for tab in space["tabs"] as? [[String: Any]] ?? [] {
+                    let terminals = tab["terminals"] as? [[String: Any]] ?? []
+                    guard terminals.contains(where: { $0["terminal"] as? String == address }),
+                          let spaceId = space["id"] as? String, let tabId = tab["id"] as? String
+                    else { continue }
+                    run(cli, ["do", "space.select", "--id", spaceId])
+                    run(cli, ["do", "tab.select", "--id", tabId])
+                    run(cli, ["do", "pane.focus", "--terminal", address])
+                    shown = true
+                    break search
+                }
+            }
+        }
+        if !shown { run(cli, ["do", "agent.focus", "--terminal", address]) }
+    }
+    app.activate()
 }
 
 func focusTerminal(terminal: String, cwd: String, tty: String, terminalId: String) {
@@ -1114,6 +1203,9 @@ func focusTerminal(terminal: String, cwd: String, tty: String, terminalId: Strin
             shell("wezterm cli activate-pane --pane-id '\(sTermId)'")
         }
         osascript("tell application \"WezTerm\" to activate")
+
+    case "herdr":
+        focusHerdr(address: terminalId)
 
     default:
         let appName = terminalAppName(terminal)
