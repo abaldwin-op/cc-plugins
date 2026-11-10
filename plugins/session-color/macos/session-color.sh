@@ -84,8 +84,8 @@ paint() { printf "$seq" > "$tty_dev" 2>/dev/null || true; }
 [ "$defer" = 1 ] || paint
 
 # SEEN: green and blue are for panes you aren't at. Once you are at one — its pane focused in the
-# frontmost window, with input in the last ten seconds, on two checks running (the second a
-# second after the first: 1–3 s from arriving) — it returns to the default background (never
+# frontmost window, with input in the last ten seconds, on two checks running (a second apart
+# while the terminal is frontmost: 1–2 s from arriving, in step with the notification) — it returns to the default background (never
 # sooner than SEEN_AFTER seconds after the turn finished, so the green registers). Focus alone isn't attention: passing through a pane on the way to another doesn't clear
 # it, and a pane left focused while you're away keeps its tint (and cools to blue as usual) until
 # you're back at the keyboard. The notifications plugin clears its notification by the same test.
@@ -108,9 +108,9 @@ paint() { printf "$seq" > "$tty_dev" 2>/dev/null || true; }
 # say which one is showing — keeps its tint until the next prompt.
 #
 # COST: a wall of finished panes means a wall of watchers, so the answer to "which pane is
-# focused" is shared: whoever asks first writes it to a file the others read for the next two
-# seconds. One query per terminal app per 2 s however many panes wait, and none at all unless
-# that app is frontmost (two lsappinfo calls say so). The idle time is read last, only for a
+# focused" is shared: whoever asks first writes it to a file the others read for the next
+# second. One query per terminal app per second however many panes wait, and none at all unless
+# that app is frontmost (two lsappinfo calls say so, every 2 s while it isn't). The idle time is read last, only for a
 # pane that is frontmost and focused.
 tmp="${TMPDIR:-/tmp}"
 
@@ -224,7 +224,11 @@ at_keyboard() { # input within the last ten seconds
   [ "${idle:-999}" -lt 10 ]
 }
 
-SEEN_AFTER=10 # seconds a finished pane keeps its tint, however closely it is being watched
+# Seconds of waiting before a finished pane may lose its tint, however closely it is being
+# watched. The checks between the waits take time too, so 4 comes out near 5 s on the clock —
+# which is when the notifications plugin's notification leaves (4 s from being posted, about a
+# second after the turn ends), so that the two go together.
+SEEN_AFTER=4
 
 watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
   memo="$SESSION_COLOR_MEMO"
@@ -238,14 +242,15 @@ watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
     paint
   fi
   [ -n "$pane" ] || return 0
-  hits=0; t=0
+  hits=0; t=0; nap=2
   while [ "$t" -lt 86400 ]; do # a day, at most
-    # A first sighting is confirmed a second later, on an answer newer than the first.
-    if [ "$hits" -gt 0 ]; then nap=1; else nap=2; fi
+    # Every second while our terminal is in front — arriving at the pane should clear it as
+    # promptly as the notification — and every other second while it isn't.
     sleep "$nap"; t=$((t + nap))
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     [ -z "$claude_pid" ] || kill -0 "$claude_pid" 2>/dev/null || return 0
-    if frontmost && focused_pane "$nap" | grep -qxF "$pane" && at_keyboard; then hits=$((hits + 1)); else hits=0; fi
+    if frontmost; then nap=1; else nap=2; hits=0; continue; fi
+    if focused_pane 1 | grep -qxF "$pane" && at_keyboard; then hits=$((hits + 1)); else hits=0; fi
     # two checks running: not just passing through; and the tint has had its time on screen
     [ "$hits" -ge 2 ] && [ "$t" -ge "$SEEN_AFTER" ] || continue
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac

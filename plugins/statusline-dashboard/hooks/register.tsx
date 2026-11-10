@@ -108,10 +108,14 @@ async function refreshBreakdown($: EngineInterface): Promise<void> {
   if (b) await update($, breakdown, () => b)
   const name = await $.session.model().catch(() => '')
   const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
+  // Thinking is on unless something turns it off: the setting reads "absent or true = enabled",
+  // and MAX_THINKING_TOKENS, when set, decides alone (0 = off), as the engine's own check does.
+  const budget = await $.env.get('MAX_THINKING_TOKENS')
+  const thinking = budget ? Number(budget) > 0 : settings.alwaysThinkingEnabled !== false
   await update($, model, (m) => ({
     name: name || m?.name || 'Unknown Model',
     effort: m?.effort,
-    thinking: settings.alwaysThinkingEnabled === true,
+    thinking,
     fast: settings.fastMode === true,
   }))
 }
