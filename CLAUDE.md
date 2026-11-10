@@ -122,7 +122,8 @@ ended on an API error. `idle` (blue: done, gone cold) comes from
 `Notification` matched to `idle_prompt`, and the dispatcher lets it through only when the lead's
 remembered state is `done`. On macOS a done pane gets a detached watcher
 (`watch_seen` in `macos/session-color.sh`) that resets it to the default background, memo `seen`,
-once the user comes back to it; it lives only while the memo says `done` or `idle` (pid in `<memo>.watch`).
+once the user is at it (pane focused in the frontmost window, input in the last 10 s, two checks running —
+the same test as notifications' `PaneWatch`; keep the two in step); it lives only while the memo says `done` or `idle` (pid in `<memo>.watch`).
 Per terminal it needs `own_pane` and `focused_pane` (Herdr, iTerm2, Terminal.app, WezTerm, Ghostty — the
 table in the README; not tmux); the focused-pane answer is shared between watchers through a 2 s file. The dispatcher shows the LEAD's state: events
 carrying `agent_id` (sub-agents, in-process teammates) paint only `needs`, and their next `working`

@@ -19,7 +19,7 @@ It flips **back** to amber after a red prompt (via `PostToolUse`), so a session 
 
 A finished session doesn't stay green forever: Claude Code's `idle_prompt` notification (about 60s after a turn ends with no input) cools it to blue — **done, but cold**. Green therefore means *just* finished. Orange stays orange: a turn that died is not "done", so it never cools to blue and waits for you to retry. Blue only ever follows green: the dispatcher ignores an `idle_prompt` that arrives in any other state, and the next prompt turns the pane amber as usual.
 
-On macOS, green and blue also clear once you've **come back** to the pane: it was out of view at some point since the turn finished, and has then been the focused pane of the frontmost window for a few seconds (passing through it doesn't count). The pane returns to the default background. A pane that stayed focused the whole time keeps its tint and cools to blue as usual.
+On macOS, green and blue also clear once you're **at the pane**: it has been the focused pane of the frontmost window for a few seconds (passing through it doesn't count) and you're at the keyboard (input in the last ten seconds). The pane returns to the default background, never sooner than about six seconds after the turn finished. A pane left focused while you're away keeps its tint and cools to blue as usual, until you're back. The [notifications](../notifications) plugin clears its notification by the same test, so the two go together.
 
 Hooks can't see focus, so a finished pane gets a small detached watcher that lives only while the pane is green or blue. It needs the terminal to say which pane is the session's and which is focused:
 

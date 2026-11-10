@@ -78,11 +78,12 @@ done
 
 printf "$seq" > "$tty_dev" 2>/dev/null || true
 
-# SEEN: green and blue are for panes you haven't been back to. Once you come back to one — its
-# pane out of view at some point since the turn finished, then focused in the frontmost window for
-# a few seconds — it returns to the default background. A pane that stayed focused the whole time
-# keeps its tint (and cools to blue as usual): focus that never moved says nothing about whether
-# anyone looked.
+# SEEN: green and blue are for panes you aren't at. Once you are at one — its pane focused in the
+# frontmost window, with input in the last ten seconds, on two checks running — it returns to the
+# default background (never sooner than a few seconds after the turn finished, so the green is
+# seen). Focus alone isn't attention: passing through a pane on the way to another doesn't clear
+# it, and a pane left focused while you're away keeps its tint (and cools to blue as usual) until
+# you're back at the keyboard. The notifications plugin clears its notification by the same test.
 #
 # Hooks can't see focus, so a finished pane gets a small detached watcher, alive only while the
 # session's remembered state is `done` or `idle` (the next prompt, SessionEnd or Claude exiting
@@ -104,7 +105,8 @@ printf "$seq" > "$tty_dev" 2>/dev/null || true
 # COST: a wall of finished panes means a wall of watchers, so the answer to "which pane is
 # focused" is shared: whoever asks first writes it to a file the others read for the next two
 # seconds. One query per terminal app per 2 s however many panes wait, and none at all unless
-# that app is frontmost (two lsappinfo calls say so).
+# that app is frontmost (two lsappinfo calls say so). The idle time is read last, only for a
+# pane that is frontmost and focused.
 tmp="${TMPDIR:-/tmp}"
 
 # pane_kind: which terminal this is, from the environment alone (cheap: decides whether to watch).
@@ -212,21 +214,23 @@ focused_pane() {
   cat "$cache" 2>/dev/null
 }
 
+at_keyboard() { # input within the last ten seconds
+  idle=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ { print int($NF / 1000000000); exit }')
+  [ "${idle:-999}" -lt 10 ]
+}
+
 watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
   memo="$SESSION_COLOR_MEMO"
   pane=$(own_pane)
   [ -n "$pane" ] || return 0
-  away=0; hits=0; n=0
+  hits=0; n=0
   while [ "$n" -lt 43200 ]; do # a day, at most
     sleep 2; n=$((n + 1))
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     [ -z "$claude_pid" ] || kill -0 "$claude_pid" 2>/dev/null || return 0
-    in_view=0
-    frontmost && focused_pane | grep -qxF "$pane" && in_view=1
-    if [ "$in_view" = 0 ]; then away=1; hits=0; continue; fi
-    [ "$away" = 1 ] || continue
-    hits=$((hits + 1))
-    [ "$hits" -ge 2 ] || continue # focused on two checks running: not just passing through
+    if frontmost && focused_pane | grep -qxF "$pane" && at_keyboard; then hits=$((hits + 1)); else hits=0; fi
+    # two checks running: not just passing through; third tick: the tint has had ~6 s on screen
+    [ "$hits" -ge 2 ] && [ "$n" -ge 3 ] || continue
     case "$(cat "$memo" 2>/dev/null)" in done|idle) ;; *) return 0 ;; esac
     # `seen`, not removed: an agent's red must still have a lead state to fall back to, and every
     # implementation paints an unknown state as reset.
