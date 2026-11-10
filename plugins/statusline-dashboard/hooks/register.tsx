@@ -513,13 +513,13 @@ export const register: Register = (on) => {
       r.href && Link ? (
         <Link key={String(k)} href={r.href} label={r.t} />
       ) : (
-        <Text key={String(k)} color={r.c} backgroundColor={r.bg} bold={r.b} italic={r.i} dimColor={r.d}>
+        <Text key={String(k)} color={r.c} backgroundColor={r.bg} weight={r.b ? 'semibold' : undefined} italic={r.i} dimColor={r.d}>
           {r.t}
         </Text>
       )
     const runs = (rs: Run[]) =>
       rs.map((r, i) => (
-        <Text key={String(i)} color={r.c} bold={r.b} italic={r.i} dimColor={r.d}>
+        <Text key={String(i)} color={r.c} weight={r.b ? 'semibold' : undefined} italic={r.i} dimColor={r.d}>
           {r.t}
         </Text>
       ))

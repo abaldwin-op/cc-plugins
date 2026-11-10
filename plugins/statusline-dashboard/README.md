@@ -5,7 +5,7 @@ rate-limit windows with pace balance, activity and sub-agents, git/PR, and full 
 breakdowns, drawn with Nerd Font glyphs in the band above the prompt. Every row folds to one line
 and opens to its full detail.
 
-It's a [mod](https://code.claude.com/docs/en/plugins/mods/overview) (Claude Code **2.1.287+**):
+It's a [mod](https://code.claude.com/docs/en/plugins/mods/overview) (Claude Code **2.1.299+**):
 nothing to set up, nothing written to your settings. Install it and it draws. Uninstall it and
 it's gone.
 
@@ -142,7 +142,7 @@ A number (`0` included) means the item can come from that scope, and that many c
 
 ## Requirements
 
-- Claude Code **2.1.287+** (mods). The dashboard draws in the terminal and in the Desktop app's
+- Claude Code **2.1.299+** (mods). The dashboard draws in the terminal and in the Desktop app's
   Code tab. The VS Code chat panel and `claude -p` run the hooks but draw nothing.
 - A [**Nerd Font**](https://www.nerdfonts.com/) for the icons in the terminal. It doesn't have to
   be your primary font: Ghostty falls back to installed fonts automatically, and in Windows

@@ -33,7 +33,7 @@ skills, sources and README — and the root holds only the marketplace file, CI 
 
 ## plugins/statusline-dashboard
 
-A **mod** (a plugin of function hooks, Claude Code 2.1.287+) that draws an opinionated dashboard
+A **mod** (a plugin of function hooks, Claude Code 2.1.299+) that draws an opinionated dashboard
 in the band above the prompt: one collapsible row per section. 2.x replaced the 1.x Bun
 `statusLine` scripts (and absorbed the old context-bar mod as the Model row's open view) because a
 mod needs no settings.json edit — uninstall leaves nothing behind but the user's config file.
