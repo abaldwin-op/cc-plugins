@@ -76,7 +76,12 @@ while [ -n "$pid" ] && [ "$pid" -gt 1 ] 2>/dev/null; do
 done
 [ -z "$tty_dev" ] && tty_dev="${first_tty:-/dev/tty}"
 
-printf "$seq" > "$tty_dev" 2>/dev/null || true
+# A pane already cleared as seen that now goes idle (still unanswered a minute on) turns blue
+# only if the user has left it: the watcher looks first and paints, or doesn't (see SEEN).
+defer=0
+[ "$1" = idle ] && [ "${SESSION_COLOR_WAS:-}" = seen ] && defer=1
+paint() { printf "$seq" > "$tty_dev" 2>/dev/null || true; }
+[ "$defer" = 1 ] || paint
 
 # SEEN: green and blue are for panes you aren't at. Once you are at one — its pane focused in the
 # frontmost window, with input in the last ten seconds, on two checks running (the second a
@@ -222,6 +227,14 @@ at_keyboard() { # input within the last ten seconds
 watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
   memo="$SESSION_COLOR_MEMO"
   pane=$(own_pane)
+  if [ "$defer" = 1 ]; then
+    # Seen, and still here: stay clear. Otherwise it has gone cold after all.
+    if [ -n "$pane" ] && frontmost && focused_pane 2 | grep -qxF "$pane" && at_keyboard; then
+      printf seen > "$memo" 2>/dev/null
+      return 0
+    fi
+    paint
+  fi
   [ -n "$pane" ] || return 0
   hits=0; t=0
   while [ "$t" -lt 86400 ]; do # a day, at most
@@ -243,13 +256,14 @@ watch_seen() { # uses tty_dev, claude_pid, pane_kind, cli, SESSION_COLOR_MEMO
 }
 
 case "$1" in done|idle) ;; *) exit 0 ;; esac
-[ -n "$pane_kind" ] && [ -n "${SESSION_COLOR_MEMO:-}" ] || exit 0
+unwatched() { [ "$defer" = 1 ] && paint; exit 0; } # nobody to look first: blue it is
+[ -n "$pane_kind" ] && [ -n "${SESSION_COLOR_MEMO:-}" ] || unwatched
 watcher=$(cat "$SESSION_COLOR_MEMO.watch" 2>/dev/null)
-[ -n "$watcher" ] && kill -0 "$watcher" 2>/dev/null && exit 0
+[ -n "$watcher" ] && kill -0 "$watcher" 2>/dev/null && unwatched
 cli=""
 case "$pane_kind" in
-  herdr) cli=$(tool herdr-app "$HOME/.local/bin/herdr-app"); [ -n "$cli" ] || exit 0 ;;
-  wezterm) cli=$(tool wezterm /Applications/WezTerm.app/Contents/MacOS/wezterm); [ -n "$cli" ] || exit 0 ;;
+  herdr) cli=$(tool herdr-app "$HOME/.local/bin/herdr-app"); [ -n "$cli" ] || unwatched ;;
+  wezterm) cli=$(tool wezterm /Applications/WezTerm.app/Contents/MacOS/wezterm); [ -n "$cli" ] || unwatched ;;
 esac
 claude_pid=""
 is_claude "${pid:-0}" && claude_pid=$pid

@@ -49,11 +49,14 @@ if [ -n "$session" ]; then
       *) exit 0 ;;
     esac
   else
-    # idle is "done, gone cold": it only ever follows the lead's own done. An idle_prompt that
-    # arrives in any other state (a prompt left unanswered, a session that hasn't run a turn)
-    # must not paint over it.
+    # idle is "done, gone cold": it only ever follows the lead's own done — or seen, a done pane
+    # the user was at and has left unanswered (the macOS watcher's word; it is told, so it can
+    # skip the blue when they are still there). An idle_prompt that arrives in any other state
+    # (a prompt left unanswered, a session that hasn't run a turn) must not paint over it.
     if [ "$state" = idle ]; then
-      [ "$(cat "$memo" 2>/dev/null)" = done ] || exit 0
+      SESSION_COLOR_WAS="$(cat "$memo" 2>/dev/null)"
+      export SESSION_COLOR_WAS
+      case "$SESSION_COLOR_WAS" in done|seen) ;; *) exit 0 ;; esac
       [ -f "$memo.agent-needs" ] && { printf idle > "$memo" 2>/dev/null; exit 0; } # under an agent's red
     fi
     rm -f "$memo.agent-needs" 2>/dev/null

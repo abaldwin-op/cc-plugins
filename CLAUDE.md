@@ -120,7 +120,7 @@ Status-driven terminal background tint. `hooks/hooks.json` maps eleven events to
 words (`working` / `needs` / `done` / `failed` / `idle` / `reset`). `failed` (orange) is `StopFailure`: the turn
 ended on an API error. `idle` (blue: done, gone cold) comes from
 `Notification` matched to `idle_prompt`, and the dispatcher lets it through only when the lead's
-remembered state is `done`. On macOS a done pane gets a detached watcher
+remembered state is `done` or `seen`. On macOS a done pane gets a detached watcher
 (`watch_seen` in `macos/session-color.sh`) that resets it to the default background, memo `seen`,
 once the user is at it (pane focused in the frontmost window, input in the last 10 s, two checks running —
 the same test as notifications' `PaneWatch`; keep the two in step); it lives only while the memo says `done` or `idle` (pid in `<memo>.watch`).
