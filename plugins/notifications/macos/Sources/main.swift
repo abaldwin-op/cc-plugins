@@ -489,6 +489,123 @@ func captureTerminalId(_ terminal: String, tty: String) -> String {
     }
 }
 
+// MARK: - Pane in view
+
+/// Whether `terminal`'s app is the one the user is in. Free: no process, no Apple event.
+func isTerminalFrontmost(_ terminal: String) -> Bool {
+    guard let front = NSWorkspace.shared.frontmostApplication else { return false }
+    switch terminal.lowercased() {
+    case "herdr": return front.processIdentifier == herdrApp()?.processIdentifier
+    case "ghostty": return front.bundleIdentifier == "com.mitchellh.ghostty"
+    default: return false
+    }
+}
+
+/// Whether the session's pane is the focused one in its terminal's front window. Costs a process
+/// (Herdr's CLI ~70 ms, osascript ~140 ms), so PaneWatch asks only while the app is frontmost.
+/// Terminals we can't ask, and panes we hold no id for, are never "in view".
+func isPaneFocused(terminal: String, terminalId: String) -> Bool {
+    guard !terminalId.isEmpty else { return false }
+    switch terminal.lowercased() {
+    case "herdr":
+        // `status` names the focused pane of the shown tab; `ls` says which pane holds our
+        // terminal. A sub-agent without a pane is in neither, and stays un-seen.
+        guard let cli = herdrApp()?.executableURL,
+              let ls = try? JSONSerialization.jsonObject(with: Data(run(cli, ["ls"]).utf8)) as? [String: Any],
+              let status = try? JSONSerialization.jsonObject(with: Data(run(cli, ["status"]).utf8)) as? [String: Any],
+              let focused = status["focused_pane"] as? String
+        else { return false }
+        for space in ls["spaces"] as? [[String: Any]] ?? [] {
+            for tab in space["tabs"] as? [[String: Any]] ?? [] {
+                for t in tab["terminals"] as? [[String: Any]] ?? [] where t["terminal"] as? String == terminalId {
+                    return t["pane"] as? String == focused
+                }
+            }
+        }
+        return false
+    case "ghostty":
+        let id = terminalId.components(separatedBy: "::")[0]
+        return osascript("""
+            tell application "Ghostty"
+                try
+                    return id of focused terminal of selected tab of front window
+                end try
+                return ""
+            end tell
+            """) == id
+    default:
+        return false
+    }
+}
+
+/// Calls `onSeen` (on the main queue, once) when the user is looking at the session's pane: its
+/// terminal app is frontmost and the pane is the focused one. A notification for a pane already
+/// on screen is noise, and one answered some other way (Herdr's own toast, cmd-tab) would
+/// otherwise sit there until the next prompt.
+///
+/// Kept light on purpose — a notifier per waiting session runs this for as long as its
+/// notification is up. Each tick is only the frontmost test; the pane is asked about just while
+/// its app is frontmost, and for Herdr only when its view file changed (Herdr rewrites view.json
+/// on every space/tab/pane switch) or every fifth tick, in case a write was missed.
+final class PaneWatch {
+    private let terminal: String
+    private let terminalId: String
+    private let onSeen: () -> Void
+    private var timer: Timer?
+    private var busy = false
+    private var wasFront = false
+    private var lastView: Date?
+    private var ticks = 0
+    private let viewFile: String = {
+        let home = ProcessInfo.processInfo.environment["HERDR_APP_HOME"]
+            ?? (NSHomeDirectory() as NSString).appendingPathComponent(".config/herdr-app")
+        return (home as NSString).appendingPathComponent("view.json")
+    }()
+
+    init?(terminal: String, terminalId: String, onSeen: @escaping () -> Void) {
+        guard !terminalId.isEmpty, ["herdr", "ghostty"].contains(terminal.lowercased()) else { return nil }
+        self.terminal = terminal
+        self.terminalId = terminalId
+        self.onSeen = onSeen
+        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+        tick()
+    }
+
+    func cancel() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        guard timer != nil, !busy else { return }
+        guard isTerminalFrontmost(terminal) else { wasFront = false; return }
+        ticks += 1
+        if terminal.lowercased() == "herdr" {
+            let view = (try? FileManager.default.attributesOfItem(atPath: viewFile))?[.modificationDate] as? Date
+            let unchanged = wasFront && view == lastView && ticks % 5 != 0
+            lastView = view
+            wasFront = true
+            if unchanged { return }
+        }
+        wasFront = true
+        busy = true
+        let (terminal, terminalId) = (self.terminal, self.terminalId)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let seen = isPaneFocused(terminal: terminal, terminalId: terminalId)
+            DispatchQueue.main.async {
+                guard let self = self, self.timer != nil else { return }
+                self.busy = false
+                if seen {
+                    self.cancel()
+                    self.onSeen()
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Native notifications (UNUserNotificationCenter)
 
 class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
@@ -556,8 +673,8 @@ func sweepDeliveredNotifications(_ center: UNUserNotificationCenter) {
 
 /// Posts a native macOS notification with an action button.
 /// Click notification body = focus terminal, action button = open editor; both act on `userInfo`.
-/// Blocks until this notification is acted on or gone, the session's Claude (`claudePid`) exits,
-/// or this process is killed.
+/// Blocks until this notification is acted on or gone, the user is looking at the session's pane
+/// (PaneWatch), the session's Claude (`claudePid`) exits, or this process is killed.
 /// Returns true if the notification was posted successfully.
 func showNativeNotification(title: String, subtitle: String, body: String, groupId: String,
                             editorButtonTitle: String, iconPath: String?,
@@ -667,6 +784,18 @@ func showNativeNotification(title: String, subtitle: String, body: String, group
         return true
     }
 
+    // Looking at the pane: the notification has done its job. Posted while already in view it
+    // stays up just long enough to read, as a banner would — it never sticks.
+    let posted = Date()
+    let paneWatch = PaneWatch(terminal: userInfo["terminal"] ?? "",
+                              terminalId: userInfo["terminalId"] ?? "") {
+        let wait = max(0, 5 - Date().timeIntervalSince(posted))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
+            center.removeDeliveredNotifications(withIdentifiers: [groupId])
+            stopApp()
+        }
+    }
+
     // Dismissed from Notification Center (no response is delivered for that), or clicked and
     // handled by another instance: nothing left to wait for.
     let gone = Timer(timeInterval: 30, repeats: true) { _ in
@@ -680,6 +809,7 @@ func showNativeNotification(title: String, subtitle: String, body: String, group
     // Block on NSApplication run loop — callbacks fire here
     withExtendedLifetime((delegate, sessionWatch)) { app.run() }
     gone.invalidate()
+    paneWatch?.cancel()
     sessionWatch?.cancel()
 
     return true
