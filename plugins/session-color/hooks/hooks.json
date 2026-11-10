@@ -1,5 +1,5 @@
 {
-  "description": "Status-driven terminal background tint. Every event runs the same dispatcher with a state word; the dispatcher picks the platform implementation (macOS/Linux shell, Windows exe built by /session-color:setup). Notification is deliberately NOT wired: it only repaints states already covered by the more specific events below (see README).",
+  "description": "Status-driven terminal background tint. Every event runs the same dispatcher with a state word; the dispatcher picks the platform implementation (macOS/Linux shell, Windows exe built by /session-color:setup). Notification is wired for idle_prompt only (a finished session gone cold); its other types repaint states the specific events below already cover (see README).",
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh reset", "timeout": 10 }] }
@@ -24,6 +24,9 @@
     ],
     "Stop": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh done", "timeout": 10 }] }
+    ],
+    "Notification": [
+      { "matcher": "idle_prompt", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh idle", "timeout": 10 }] }
     ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh reset", "timeout": 10 }] }

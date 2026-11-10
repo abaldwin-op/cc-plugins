@@ -10,12 +10,15 @@ Tint the terminal background by [Claude Code](https://claude.com/product/claude-
 |-------|-------|----------|
 | 🟡 **working** | amber | `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `ElicitationResult` |
 | 🔴 **needs you** | red | `PermissionRequest`, `Elicitation` |
-| 🟢 **done / idle** | green | `Stop` |
+| 🟢 **done** | green | `Stop` |
+| 🔵 **idle** | blue | `Notification` (`idle_prompt` only) — done, gone cold |
 | ⬛ **reset** | default | `SessionStart`, `SessionEnd` |
 
 It flips **back** to amber after a red prompt (via `PostToolUse`), so a session that asked for permission mid-task doesn't get stuck looking like it still needs you.
 
-Red is reserved for *actual* blocking decisions (`PermissionRequest`, `Elicitation`). The `Notification` event is deliberately left unwired: it fires for `permission_prompt`, `idle_prompt`, `elicitation_*`, and `auth_success` — every one already covered by a more specific event above. In particular `idle_prompt` (idle ~60s after finishing) would just repaint an already-green session, so coloring on `Notification` adds nothing but conflicts.
+A finished session doesn't stay green forever: Claude Code's `idle_prompt` notification (about 60s after a turn ends with no input) cools it to blue — **done, but cold**. Green therefore means *just* finished. Blue only ever follows green: the dispatcher ignores an `idle_prompt` that arrives in any other state, and the next prompt turns the pane amber as usual.
+
+Red is reserved for *actual* blocking decisions (`PermissionRequest`, `Elicitation`). Of the `Notification` event's types only `idle_prompt` is wired: `permission_prompt`, `elicitation_*` and `auth_success` are each already covered by a more specific event above, so coloring on them adds nothing but conflicts.
 
 ## Install
 
@@ -58,7 +61,7 @@ The exe has to be built once with [Rust](https://rustup.rs/) (PowerShell 7 `pwsh
 /session-color:setup
 ```
 
-It builds `session-color.exe` and stages it in the plugin's persistent data directory (`~/.claude/plugins/data/…`), which is where the dispatcher runs it from — the plugin's own install path changes with every version, the data directory doesn't. Until setup has run the hooks are silent no-ops. Needs [Windows Terminal](https://github.com/microsoft/terminal) on a recent Windows 11 build: older ConPTY swallows OSC 11, in which case the tint silently won't appear.
+Re-run it after updating to 1.1.0: an exe built before then doesn't know `idle` and resets the pane to the default background instead of blue. It builds `session-color.exe` and stages it in the plugin's persistent data directory (`~/.claude/plugins/data/…`), which is where the dispatcher runs it from — the plugin's own install path changes with every version, the data directory doesn't. Until setup has run the hooks are silent no-ops. Needs [Windows Terminal](https://github.com/microsoft/terminal) on a recent Windows 11 build: older ConPTY swallows OSC 11, in which case the tint silently won't appear.
 
 ### Requirements
 
@@ -93,7 +96,8 @@ Edit the hex values at the top of `macos/session-color.sh` / `linux/session-colo
 case "$1" in
   working) seq='\033]11;#574515\007' ;;   # amber — working
   needs)   seq='\033]11;#501d22\007' ;;   # red   — needs you (blocking)
-  done)    seq='\033]11;#233f20\007' ;;   # green — done / idle
+  done)    seq='\033]11;#233f20\007' ;;   # green — done, your move
+  idle)    seq='\033]11;#1d3150\007' ;;   # blue  — done, gone cold
   reset|*) seq='\033]111\007'        ;;   # reset bg to terminal default
 esac
 ```

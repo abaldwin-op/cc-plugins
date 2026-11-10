@@ -17,20 +17,23 @@
 #                       ElicitationResult            (Claude is busy; you wait)
 #   needs    red     -> PermissionRequest, Elicitation
 #                                          (blocked: Claude needs a decision)
-#   done     green   -> Stop               (turn finished / idle; your move)
+#   done     green   -> Stop               (turn finished; your move)
+#   idle     blue    -> Notification/idle_prompt   (done, gone cold: ~60s idle
+#                                          after a finished turn; the dispatcher
+#                                          lets it through only from done)
 #   reset    default -> SessionStart, SessionEnd
 #
-# Note: Notification is intentionally NOT wired. It fires for permission_prompt,
-# idle_prompt, elicitation_*, and auth_success — every one already covered by a
-# more specific event above (PermissionRequest, Elicitation, ElicitationResult,
-# Stop). Coloring on it only double-paints; idle_prompt in particular would
-# repaint an already-finished (green) session for no reason.
+# Note: of Notification's types only idle_prompt is wired. permission_prompt,
+# elicitation_* and auth_success are each covered by a more specific event above
+# (PermissionRequest, Elicitation, ElicitationResult); coloring on them only
+# double-paints.
 #
 # Tweak the hex values below; dim tints keep text readable across the pane.
 case "$1" in
   working) seq='\033]11;#574515\007' ;;   # amber — working
   needs)   seq='\033]11;#501d22\007' ;;   # red   — needs you (blocking)
-  done)    seq='\033]11;#233f20\007' ;;   # green — done / idle, your move
+  done)    seq='\033]11;#233f20\007' ;;   # green — done, your move
+  idle)    seq='\033]11;#1d3150\007' ;;   # blue  — done, gone cold
   reset|*) seq='\033]111\007'        ;;   # reset bg to terminal default
 esac
 

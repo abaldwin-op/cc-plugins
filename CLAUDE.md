@@ -116,14 +116,16 @@ statusline-dashboard's config file's `hide` list.
 
 ## plugins/session-color
 
-Status-driven terminal background tint. `hooks/hooks.json` maps nine events to one of four state
-words (`working` / `needs` / `done` / `reset`). The dispatcher shows the LEAD's state: events
+Status-driven terminal background tint. `hooks/hooks.json` maps ten events to one of five state
+words (`working` / `needs` / `done` / `idle` / `reset`). `idle` (blue: done, gone cold) comes from
+`Notification` matched to `idle_prompt`, and the dispatcher lets it through only when the lead's
+remembered state is `done`. The dispatcher shows the LEAD's state: events
 carrying `agent_id` (sub-agents, in-process teammates) paint only `needs`, and their next `working`
 restores the lead's last state (remembered per session in `$TMPDIR/session-color-<session_id>`).
 The macOS/Linux tty walk stops at the nearest `claude` process (no tty there → paint nothing), so a
 background session never tints the pane of the session that launched it — keep it in sync with the tables in the README and
-the `MAPPING` comment in `windows/src/main.rs`. `Notification` is deliberately unwired (it only
-repaints states the specific events already cover). Implementations: `macos/session-color.sh`
+the `MAPPING` comment in `windows/src/main.rs`. `Notification`'s other types are deliberately unwired (they only
+repaint states the specific events already cover). Implementations: `macos/session-color.sh`
 (OSC 11 to the pane's pty, found by walking the process tree to `claude`), `linux/session-color.sh`
 (same, but tmux-native `select-pane -P bg=` when inside tmux), `windows/` (Rust: `AttachConsole`
 to Claude's ConPTY, write to `CONOUT$`). The Windows exe is built by `windows/setup.ps1` into the

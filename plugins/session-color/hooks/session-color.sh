@@ -1,6 +1,6 @@
 #!/bin/sh
 # session-color — hook dispatcher. hooks.json runs this for every wired event with one argument,
-# the state to paint (working | needs | done | reset); it hands off to the platform implementation.
+# the state to paint (working | needs | done | idle | reset); it hands off to the platform implementation.
 #
 # WHY A DISPATCHER: a plugin's hooks.json is one file for every OS, with no per-platform branching,
 # while the tint is delivered three different ways (OSC 11 to the pane's pty on macOS, tmux-native
@@ -49,6 +49,13 @@ if [ -n "$session" ]; then
       *) exit 0 ;;
     esac
   else
+    # idle is "done, gone cold": it only ever follows the lead's own done. An idle_prompt that
+    # arrives in any other state (a prompt left unanswered, a session that hasn't run a turn)
+    # must not paint over it.
+    if [ "$state" = idle ]; then
+      [ "$(cat "$memo" 2>/dev/null)" = done ] || exit 0
+      [ -f "$memo.agent-needs" ] && { printf idle > "$memo" 2>/dev/null; exit 0; } # under an agent's red
+    fi
     rm -f "$memo.agent-needs" 2>/dev/null
     if [ "$state" = reset ]; then rm -f "$memo" 2>/dev/null; else printf '%s' "$state" > "$memo" 2>/dev/null; fi
   fi

@@ -18,7 +18,7 @@
 // never clobber each other.
 //
 // Subcommands (each invoked as a separate process by hook events):
-//   working | needs | done | reset  — paint the pane (the hook itself)
+//   working | needs | done | idle | reset  — paint the pane (the hook itself)
 //   install                          — register the status->color hooks
 //   uninstall                        — remove them again
 //
@@ -27,11 +27,13 @@
 //                       ElicitationResult            (Claude is busy; you wait)
 //   needs    red     -> PermissionRequest, Elicitation
 //                                          (blocked: Claude needs a decision)
-//   done     green   -> Stop               (turn finished / idle; your move)
+//   done     green   -> Stop               (turn finished; your move)
+//   idle     blue    -> Notification/idle_prompt   (done, gone cold; plugin only —
+//                                          the dispatcher lets it through only from done)
 //   reset    default -> SessionStart, SessionEnd
 //
-// Note: Notification is intentionally NOT wired (see README) — it only repaints
-// states already covered by more specific events.
+// Note: of Notification's types only idle_prompt is wired, and only by the plugin's
+// hooks.json (see README); the others repaint states the specific events cover.
 //
 // NOTE ON FEASIBILITY: this depends on ConPTY forwarding OSC 11 background
 // changes through to Windows Terminal. Modern Windows 11 + Windows Terminal
@@ -67,7 +69,7 @@ fn main() -> ExitCode {
     let exe = env::current_exe().unwrap_or_default();
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: session-color <working|needs|done|reset|install|uninstall>");
+        eprintln!("Usage: session-color <working|needs|done|idle|reset|install|uninstall>");
         return ExitCode::from(1);
     }
 
@@ -89,7 +91,8 @@ fn paint(state: &str) -> i32 {
     let seq: &[u8] = match state {
         "working" => b"\x1b]11;#574515\x07", // amber — working
         "needs" => b"\x1b]11;#501d22\x07",   // red   — needs you (blocking)
-        "done" => b"\x1b]11;#233f20\x07",    // green — done / idle, your move
+        "done" => b"\x1b]11;#233f20\x07",    // green — done, your move
+        "idle" => b"\x1b]11;#1d3150\x07",    // blue  — done, gone cold
         _ => b"\x1b]111\x07",                // reset bg to terminal default
     };
 
