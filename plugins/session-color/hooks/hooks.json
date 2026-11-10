@@ -25,6 +25,9 @@
     "Stop": [
       { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh done", "timeout": 10 }] }
     ],
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh failed", "timeout": 10 }] }
+    ],
     "Notification": [
       { "matcher": "idle_prompt", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-color.sh idle", "timeout": 10 }] }
     ],

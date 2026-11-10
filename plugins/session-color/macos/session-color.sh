@@ -18,6 +18,8 @@
 #   needs    red     -> PermissionRequest, Elicitation
 #                                          (blocked: Claude needs a decision)
 #   done     green   -> Stop               (turn finished; your move)
+#   failed   orange  -> StopFailure        (the turn ended on an API error: rate
+#                                          limit, overload, auth; it did NOT finish)
 #   idle     blue    -> Notification/idle_prompt   (done, gone cold: ~60s idle
 #                                          after a finished turn; the dispatcher
 #                                          lets it through only from done)
@@ -33,6 +35,7 @@ case "$1" in
   working) seq='\033]11;#574515\007' ;;   # amber — working
   needs)   seq='\033]11;#501d22\007' ;;   # red   — needs you (blocking)
   done)    seq='\033]11;#233f20\007' ;;   # green — done, your move
+  failed)  seq='\033]11;#5c2e0e\007' ;;   # orange — turn died on an API error
   idle)    seq='\033]11;#1d3150\007' ;;   # blue  — done, gone cold
   reset|*) seq='\033]111\007'        ;;   # reset bg to terminal default
 esac

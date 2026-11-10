@@ -18,6 +18,8 @@
 #   needs    red     -> PermissionRequest, Elicitation
 #                                          (blocked: Claude needs a decision)
 #   done     green   -> Stop               (turn finished; your move)
+#   failed   orange  -> StopFailure        (the turn ended on an API error: rate
+#                                          limit, overload, auth; it did NOT finish)
 #   idle     blue    -> Notification/idle_prompt   (done, gone cold: ~60s idle
 #                                          after a finished turn; the dispatcher
 #                                          lets it through only from done)
@@ -28,6 +30,7 @@ case "$1" in
   working) col='#574515' ;;   # amber — working
   needs)   col='#501d22' ;;   # red   — needs you (blocking)
   done)    col='#233f20' ;;   # green — done, your move
+  failed)  col='#5c2e0e' ;;   # orange — turn died on an API error
   idle)    col='#1d3150' ;;   # blue  — done, gone cold
   reset|*) col='default' ;;   # reset bg to terminal/tmux default
 esac

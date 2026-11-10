@@ -116,8 +116,9 @@ statusline-dashboard's config file's `hide` list.
 
 ## plugins/session-color
 
-Status-driven terminal background tint. `hooks/hooks.json` maps ten events to one of five state
-words (`working` / `needs` / `done` / `idle` / `reset`). `idle` (blue: done, gone cold) comes from
+Status-driven terminal background tint. `hooks/hooks.json` maps eleven events to one of six state
+words (`working` / `needs` / `done` / `failed` / `idle` / `reset`). `failed` (orange) is `StopFailure`: the turn
+ended on an API error. `idle` (blue: done, gone cold) comes from
 `Notification` matched to `idle_prompt`, and the dispatcher lets it through only when the lead's
 remembered state is `done`. The dispatcher shows the LEAD's state: events
 carrying `agent_id` (sub-agents, in-process teammates) paint only `needs`, and their next `working`

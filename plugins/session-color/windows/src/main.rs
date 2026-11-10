@@ -18,7 +18,7 @@
 // never clobber each other.
 //
 // Subcommands (each invoked as a separate process by hook events):
-//   working | needs | done | idle | reset  — paint the pane (the hook itself)
+//   working | needs | done | failed | idle | reset  — paint the pane (the hook itself)
 //   install                          — register the status->color hooks
 //   uninstall                        — remove them again
 //
@@ -28,6 +28,7 @@
 //   needs    red     -> PermissionRequest, Elicitation
 //                                          (blocked: Claude needs a decision)
 //   done     green   -> Stop               (turn finished; your move)
+//   failed   orange  -> StopFailure        (turn ended on an API error; plugin only)
 //   idle     blue    -> Notification/idle_prompt   (done, gone cold; plugin only —
 //                                          the dispatcher lets it through only from done)
 //   reset    default -> SessionStart, SessionEnd
@@ -69,7 +70,7 @@ fn main() -> ExitCode {
     let exe = env::current_exe().unwrap_or_default();
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: session-color <working|needs|done|idle|reset|install|uninstall>");
+        eprintln!("Usage: session-color <working|needs|done|failed|idle|reset|install|uninstall>");
         return ExitCode::from(1);
     }
 
@@ -92,6 +93,7 @@ fn paint(state: &str) -> i32 {
         "working" => b"\x1b]11;#574515\x07", // amber — working
         "needs" => b"\x1b]11;#501d22\x07",   // red   — needs you (blocking)
         "done" => b"\x1b]11;#233f20\x07",    // green — done, your move
+        "failed" => b"\x1b]11;#5c2e0e\x07",  // orange — turn died on an API error
         "idle" => b"\x1b]11;#1d3150\x07",    // blue  — done, gone cold
         _ => b"\x1b]111\x07",                // reset bg to terminal default
     };

@@ -1,6 +1,6 @@
 #!/bin/sh
 # session-color — hook dispatcher. hooks.json runs this for every wired event with one argument,
-# the state to paint (working | needs | done | idle | reset); it hands off to the platform implementation.
+# the state to paint (working | needs | done | failed | idle | reset); it hands off to the platform implementation.
 #
 # WHY A DISPATCHER: a plugin's hooks.json is one file for every OS, with no per-platform branching,
 # while the tint is delivered three different ways (OSC 11 to the pane's pty on macOS, tmux-native
