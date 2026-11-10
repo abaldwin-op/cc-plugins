@@ -37,7 +37,8 @@ The dashboard re-reads it every minute and at each session start; no restart.
 | `padTop` | integer 0–3 | `1` | Blank lines above the first row, between it and the spinner. Taken only from height the rows leave unused, so it never costs a row; `0` removes it. |
 
 **Row ids**, in the default order: `model`, `limits`, `usage`, `turn`, `activity`, `agents`,
-`repo`, `config`, `exts`, `host`, `info`.
+`repo`, `config`, `host`, `info`. (`exts` was a row before 2.1; it is now the plugin-components
+item of the Config row. In `rows` it is ignored; in `hide` it hides that item.)
 
 **Widget ids** for `hide`:
 
@@ -52,9 +53,10 @@ The dashboard re-reads it every minute and at each session start; no restart.
 - `repo.remote`, `repo.worktree`, `repo.branch`, `repo.pr`, `repo.tag`, `repo.files` (the open row's last commit and changed files)
 - `config.instructions`, `config.memory`, `config.agents`, `config.commands`, `config.skills`,
   `config.workflows`, `config.routines`, `config.rules`, `config.mcp`, `config.connectors`,
-  `config.chrome`, `config.hooks`, `config.plugins`, `config.themes`, `config.dirs`, and
-  `config.scopes` (the `(m/u/p/l/x)` breakdowns)
-- `exts.lsp`, `exts.monitors`, `exts.bin`, `exts.channels`
+  `config.chrome`, `config.hooks`, `config.plugins`, `config.themes`, `config.dirs`,
+  `config.exts` (the plugin-components item), and `config.scopes` (the `(m/u/p/l/x)` breakdowns)
+- `exts.lsp`, `exts.monitors`, `exts.bin`, `exts.channels`: each keeps one type out of the
+  plugin-components item's count and list
 - `host.clock`, `host.os`, `host.user`, `host.fleet`
 - `info.cwd`, `info.style`, `info.version`, `info.agent`, `info.session`
 
@@ -70,3 +72,7 @@ Example: a compact three-row dashboard without the Host clutter:
 
 Opening and closing rows doesn't need the file: the user clicks a row's label, or runs
 `/dash <row>`, `/dash open all`, `/dash close all`. `/dash` alone hides or shows the whole dashboard.
+A Config item's list (what its count is made of) opens with a click on the item or
+`/dash config <item>` (`skills`, `mcp`, `hooks`, `plugins`, `exts`, …), which also prints the whole
+list; none of that needs the file either. An open row's detail that has more than fits scrolls
+under the mouse wheel or its `▲` `▼`.

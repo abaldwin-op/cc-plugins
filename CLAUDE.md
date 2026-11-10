@@ -57,10 +57,10 @@ key must be declared in `types/index.d.ts`.
   trust-gated), the OAuth usage API via `$.session.authorize()` (the credential never reaches the
   mod), and the 1.x legacy cleanup. Each collector swallows its own failures.
 - `hooks/sections.ts` — pure row builders (state in, `Section[]` out), user-config parsing, Nerd
-  Font glyph table. Widget ids (`on("row.widget")`) must stay in sync with the README table and
+  Font glyph table, and the Config drill-downs (`DRILLS`, `drillEntries`/`drillLines`/`drillText`). Widget ids (`on("row.widget")`) must stay in sync with the README table and
   the configure skill's id list.
 - `hooks/layout.ts` — pure layout: `Run`/`Item`/`Section`, `packSection` (the status line's
-  packer, carried over), `plan` (height budget), `contextDetail`/`stack` (the breakdown bar),
+  packer, carried over), `plan` (height budget), `windowDetail` (the scrolling detail window), `contextDetail`/`stack` (the breakdown bar),
   `stripLabels`, formatting. Tests check its arithmetic directly.
 - `types/index.d.ts` — the `$.state` contract.
 - `tests/dashboard.test.tsx` — `claude plugin test plugins/statusline-dashboard`.
@@ -78,7 +78,21 @@ key must be declared in `types/index.d.ts`.
   viewport rows (`maxRows` there is the whole terminal); config `maxRows` can only lower it. `plan`
   gives every section with data one line; over budget, sections leave to a one-line overflow strip
   of toggles in `DROP_ORDER`; the oldest open row folds before the newest; other rows yield seats
-  to the newest open row before it is cut. Nothing scrolls; nothing is unreachable.
+  to the newest open row before it is cut. The band's tree never scrolls; nothing is unreachable.
+- **Detail scrolls inside its row.** Builders hand over a row's whole detail (`Section.detail`,
+  plus `detailAt`: where the window stands unscrolled, `'end'` for a history); `windowDetail`
+  cuts it to `listRows` lines and, when there is more, adds the controls line (`page:<row>:±1`
+  buttons). Offsets live per row in the `scroll` atom, only while they differ from `detailAt`.
+  The `ui.scroll` hook (wheel, scroll keys) moves the newest open row that has more than fits.
+  Scroll only what the state already holds; don't log more history to have more to scroll.
+- **Config drill-downs.** A Config item with entries behind its count is a Button (`Run.press`,
+  `drill:<id>`); pressing it draws that item's list as the row's detail. The list
+  is the row's detail like any other (`drillDetail`), so it scrolls the same way, its title
+  carrying the controls. Entries (`Entry`: name, scope, tokens, note) are collected with the
+  counts into `Counts.lists`; counts are tallied from those lists, so the two can't disagree.
+  **Adding an item** = an entry list in `collectCounts`, a `DRILLS` entry, its `Counts` field, the
+  README's item table and the configure skill. Exts. was a row until 2.1 and is the `exts` item
+  now; its `exts.*` hide ids and a bare `exts` still work.
 - **Adding a row** = a builder in `sections.ts`, an id in `ROW_IDS` and `DROP_ORDER`, the README
   row list and table, and the configure skill.
 - Glyphs only on the `terminal` surface (desktop has no Nerd Font); semantic colors are theme

@@ -4,7 +4,7 @@
 // Widget ids (`model.effort`, `repo.pr`, …) are the user config's `hide` ids; the README table
 // and the configure skill's id list must stay in sync with the `on(...)` calls below.
 
-import type { Activity, ApiUsage, Breakdown, Counts, Host, Info, Model, Repo, Scopes, Usage } from '../types'
+import type { Activity, ApiUsage, Breakdown, Counts, Entry, Host, Info, Model, Repo, Scopes, Usage } from '../types'
 import {
   BAD,
   GOOD,
@@ -12,6 +12,7 @@ import {
   ROW_IDS,
   bar,
   c256,
+  cells,
   contextColor,
   formatClock,
   formatCost,
@@ -25,6 +26,7 @@ import {
   truncate,
   truncateRuns,
   usageColor,
+  windowDetail,
   type Item,
   type RowId,
   type Run,
@@ -132,15 +134,12 @@ export const G = {
   cfgPlugins: cp(0xf1288), // nf-md-toy_brick (LEGO)
   cfgConn: cp(0xf015f), // nf-md-cloud — claude.ai connectors
   cfgDirs: cp(0xf0257), // nf-md-folder_plus
-  cfgLsp: cp(0xf0761), // nf-md-code_braces
-  cfgMonitor: cp(0xf0437), // nf-md-radar
   cfgTheme: cp(0xf03d8), // nf-md-palette
-  cfgBin: cp(0xf0614), // nf-md-application
-  cfgChannel: cp(0xf028c), // nf-md-forum
   cfgChrome: cp(0xf268), // nf-fa-chrome (FA exception; if blank use nf-md-google_chrome 0xf02af)
   cfgWorkflows: cp(0xf04aa), // nf-md-sitemap
   cfgRoutines: cp(0xf00f0), // nf-md-calendar_clock
   cfgMemory: cp(0xf1345), // nf-md-head_lightbulb_outline — auto-memory files
+  cfgExts: cp(0xf0431), // nf-md-puzzle — plugin components (LSP, monitors, bin/, channels)
   github: cp(0xf02a4), // nf-md-github
   gitlab: cp(0xf0ba0), // nf-md-gitlab
   bitbucket: cp(0xf00a8), // nf-md-bitbucket
@@ -185,7 +184,7 @@ const d = (t: string): Run => ({ t, d: true })
  * Builds every row. `room` is the cells an open row's detail lines get (past the toggle and
  * label); each detail line is cut to it.
  */
-export function buildSections(x: Inputs, cfg: Config, glyphs: boolean, room = 80): Section[] {
+export function buildSections(x: Inputs, cfg: Config, glyphs: boolean, room = 80, drill?: string): Section[] {
   const on = (id: string) => !cfg.hide.has(id)
   const icon: Icon = (glyph, color) => (glyphs ? [{ t: glyph, c: color }, { t: ' ' }] : [])
   const build: Record<RowId, () => Section> = {
@@ -196,25 +195,28 @@ export function buildSections(x: Inputs, cfg: Config, glyphs: boolean, room = 80
     activity: () => activityRow(x, on, icon),
     agents: () => agentsRow(x, on, icon),
     repo: () => repoRow(x, on, icon),
-    config: () => configRow(x, on, icon),
-    exts: () => extsRow(x, on, icon),
+    config: () => configRow(x, on, icon, drill),
     host: () => hostRow(x, cfg, on, icon),
     info: () => infoRow(x, on, icon),
   }
-  const details: Partial<Record<RowId, () => Run[][]>> = {
-    turn: () => turnDetail(x, on),
+  // Each open row's detail in full, and where its window stands until scrolled: the histories
+  // (turns, agents) at their newest line, the todo list around the current item.
+  const details: Partial<Record<RowId, () => Pick<Section, 'detail' | 'detailAt' | 'detailHead' | 'detailTail'>>> = {
+    turn: () => ({ detail: turnDetail(x, on), detailAt: 'end' }),
     activity: () => activityDetail(x, on),
-    agents: () => agentsDetail(x, on, glyphs),
-    repo: () => repoDetail(x, on),
+    agents: () => ({ detail: agentsDetail(x, on, glyphs), detailAt: 'end' }),
+    repo: () => ({ detail: repoDetail(x, on) }),
+    config: () => (isDrill(drill) ? drillDetail(x.counts, drill, room, glyphs, on) : {}),
   }
   return cfg.rows.map((id) => {
     const s = build[id]()
-    const extra = s.items.length ? details[id]?.() ?? [] : []
-    return extra.length ? { ...s, detail: extra.map((l) => truncateRuns(l, room)) } : s
+    const extra = s.items.length ? details[id]?.() : undefined
+    return extra?.detail?.length ? { ...s, ...extra } : s
   })
 }
 
 // ── open-row detail: the history a closed row has no room for ──────────────────────────────────
+// Everything the state holds, one line each: the row shows a window of it and scrolls the rest.
 
 const ago = (ms: number) => (ms < 60e3 ? 'now' : `${formatDuration(ms)} ago`)
 
@@ -244,18 +246,18 @@ const TODO_MARK: Record<string, [string, string | undefined]> = {
   pending: ['○', undefined],
 }
 
-// The todo list, the last few tool calls (✔ answered, ✘ failed, … running), and the sub-agents.
-function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
+// The todo list, the last tool calls (✔ answered, ✘ failed, … running), and the sub-agents.
+function activityDetail(x: Inputs, on: (id: string) => boolean): Pick<Section, 'detail' | 'detailAt'> {
   const a = x.activity
-  if (!a) return []
+  if (!a) return {}
   const lines: Run[][] = []
+  let at = 0
   const tasks = Object.values(a.tasks)
   const todos = tasks.length ? tasks : a.todoItems ?? []
   if (todos.length && on('activity.todo')) {
-    // Around the current item: the last done, the current, and what comes next.
-    const cur = Math.max(0, todos.findIndex((t) => t.status !== 'completed'))
-    const from = Math.max(0, Math.min(cur - 1, todos.length - 4))
-    for (const t of todos.slice(from, from + 4)) {
+    // The window starts around the current item: the last done, the current, and what comes next.
+    at = Math.max(0, todos.findIndex((t) => t.status !== 'completed') - 1)
+    for (const t of todos) {
       const [mark, col] = TODO_MARK[t.status] ?? ['○', undefined]
       lines.push([v(`${mark} `, col), t.status === 'completed' ? d(t.subject) : v(t.subject)])
     }
@@ -270,7 +272,7 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
       else runs.push({ label, ok: t.ok, n: 1 })
     }
     // One call per line, newest last like the turn history: side by side, the targets got cut.
-    for (const c of runs.slice(-5)) {
+    for (const c of runs) {
       lines.push([
         v(c.label),
         c.ok === undefined ? v(' …', WARN) : c.ok ? v(` ${OK}`, GOOD) : v(` ${NO}`, BAD),
@@ -278,7 +280,7 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
       ])
     }
   }
-  return lines
+  return { detail: lines, detailAt: at }
 }
 
 // The last commit and the first changed paths, colored like the branch counts.
@@ -494,8 +496,6 @@ function activityRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Sectio
 // want their own history. Closed: how many sub-agents run, a green tally of finished ones (failed in
 // red), and who is on the team. Open: the history, newest last (agentsDetail).
 
-const isLive = (st: string) => st === 'running' || st === 'pending' || st === 'waiting'
-
 function agentsRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
   const items: Item[] = []
   const ag = x.activity?.agents
@@ -515,21 +515,19 @@ function agentsRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section 
   return { id: 'agents', label: 'Agents', items }
 }
 
-// The last six sub-agents and teammates, plus any older one still running: a robot or a person,
+// The session's sub-agents and teammates in start order (the state keeps twenty): a robot or a person,
 // what it is, what it was asked, and where it stands.
 function agentsDetail(x: Inputs, on: (id: string) => boolean, glyphs: boolean): Run[][] {
   const all = x.activity?.agents.list ?? []
   if (!all.length || !on('agents.history')) return []
-  return all
-    .filter((a, i) => i >= all.length - 6 || isLive(a.status))
-    .map((a) => {
-      const done = a.status === 'completed' || a.status === 'ended'
-      const failed = a.status === 'failed' || a.status === 'killed'
-      const idle = a.status === 'idle'
-      const [mark, col] = done ? [OK, GOOD] : failed ? [NO, BAD] : idle ? ['◌', undefined] : ['●', WARN]
-      const who = glyphs ? [{ t: a.mate ? G.person : G.model, c: a.mate ? c256(43) : CYAN }, { t: ' ' }] : []
-      return [v(`${mark} `, col), ...who, v(a.mate ? a.name ?? a.type : a.type), d(`  ${a.description}`)]
-    })
+  return all.map((a) => {
+    const done = a.status === 'completed' || a.status === 'ended'
+    const failed = a.status === 'failed' || a.status === 'killed'
+    const idle = a.status === 'idle'
+    const [mark, col] = done ? [OK, GOOD] : failed ? [NO, BAD] : idle ? ['◌', undefined] : ['●', WARN]
+    const who = glyphs ? [{ t: a.mate ? G.person : G.model, c: a.mate ? c256(43) : CYAN }, { t: ' ' }] : []
+    return [v(`${mark} `, col), ...who, v(a.mate ? a.name ?? a.type : a.type), d(`  ${a.description}`)]
+  })
 }
 
 // ── Repo ─────────────────────────────────────────────────────────────────────────────────────────
@@ -569,14 +567,66 @@ function repoRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
 
 const glyphOr = (icon: Icon, glyph: string, fallback: string) => (icon(glyph).length ? glyph : fallback)
 
-// ── Config / Exts. ───────────────────────────────────────────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────────────────────────────────────────
 // `icon total (m/u/p/l/x)`: a count, then a dim parenthetical saying WHERE those items come from.
 // Five fixed slots, broad → narrow: managed / user / project / local / plugin. A digit (0 too)
 // means the item type CAN come from that scope; `-` means it never can. The parens appear only
 // once the total is > 0, and are the first thing dropped when the row runs out of width.
+//
+// Every item with something behind its count is a button: pressing it DRILLS into the item, a
+// scrollable list of what the count is made of drawn under the row (drillDetail). The plugin-only
+// component types (LSP servers, monitors, bin/ executables, channels) were a row of their own,
+// Exts.; they are one item here now, their four counts being zero for most people and the list
+// saying which is which.
 
 const SCOPES = ['m', 'u', 'p', 'l', 'x'] as const
+const SCOPE_WORD: Record<string, string> = { m: 'managed', u: 'user', p: 'project', l: 'local', x: 'plugin' }
 const total = (c: Scopes) => (c.m ?? 0) + (c.u ?? 0) + (c.p ?? 0) + (c.l ?? 0) + (c.x ?? 0)
+
+/** The Config items that open a list, in row order: label, glyph, hue, and the scope slots they can fill. */
+export const DRILLS = {
+  instructions: { label: 'Instruction files', glyph: G.cfgDoc, color: c256(36), caps: 'mupl' },
+  memory: { label: 'Memory files', glyph: G.cfgMemory, color: c256(177), caps: '' },
+  agents: { label: 'Agents', glyph: G.cfgAgents, color: c256(211), caps: 'mupx' },
+  commands: { label: 'Commands', glyph: G.cfgCmds, color: c256(32), caps: 'upx' },
+  skills: { label: 'Skills', glyph: G.cfgSkills, color: c256(141), caps: 'mupx' },
+  workflows: { label: 'Workflows', glyph: G.cfgWorkflows, color: c256(78), caps: 'upx' },
+  routines: { label: 'Routines', glyph: G.cfgRoutines, color: c256(173), caps: 'up' },
+  rules: { label: 'Rules', glyph: G.cfgRules, color: c256(33), caps: 'up' },
+  mcp: { label: 'MCP servers', glyph: G.cfgMcp, color: c256(216), caps: 'muplx' },
+  connectors: { label: 'Connectors', glyph: G.cfgConn, color: c256(117), caps: '' },
+  hooks: { label: 'Hooks', glyph: G.cfgHooks, color: c256(220), caps: 'muplx' },
+  plugins: { label: 'Plugins', glyph: G.cfgPlugins, color: c256(196), caps: 'mupl' },
+  themes: { label: 'Themes', glyph: G.cfgTheme, color: c256(213), caps: 'ux' },
+  dirs: { label: 'Added directories', glyph: G.cfgDirs, color: c256(250), caps: '' },
+  exts: { label: 'Plugin components', glyph: G.cfgExts, color: c256(81), caps: '' },
+} as const
+export type DrillId = keyof typeof DRILLS
+export const isDrill = (s: unknown): s is DrillId => typeof s === 'string' && Object.prototype.hasOwnProperty.call(DRILLS, s)
+
+const EXT_KINDS = ['lsp', 'monitors', 'bin', 'channels'] as const
+const EXT_WORD: Record<string, string> = { lsp: 'LSP', monitors: 'monitor', bin: 'bin', channels: 'channel' }
+
+/** Whether the item is on: its own widget id, and for the plugin components the old row's too. */
+const drillOn = (id: DrillId, on: (id: string) => boolean) => on(`config.${id}`) && (id !== 'exts' || (on('exts') && EXT_KINDS.some((k) => on(`exts.${k}`))))
+
+/**
+ * What a drill-down lists: the item's entries, heaviest in context first where the engine counts
+ * tokens, otherwise broadest scope first and by name. Plugin components hidden by id stay out.
+ */
+export function drillEntries(c: Counts | null, id: DrillId, on: (id: string) => boolean = () => true): Entry[] {
+  const all = (c?.lists?.[id] ?? []).filter((e) => id !== 'exts' || !e.kind || on(`exts.${e.kind}`))
+  const rank = (e: Entry) => SCOPES.indexOf(e.scope ?? 'x')
+  return [...all].sort((a, b) => (b.tokens ?? -1) - (a.tokens ?? -1) || rank(a) - rank(b) || a.name.localeCompare(b.name))
+}
+
+/** The count an item shows: by scope, from the same counts the row always had. */
+function drillCount(c: Counts, id: DrillId, on: (id: string) => boolean): Scopes {
+  if (id !== 'exts') return c[id]
+  const sum: Scopes = {}
+  for (const k of EXT_KINDS) if (on(`exts.${k}`)) for (const s of SCOPES) if (c[k][s]) sum[s] = (sum[s] ?? 0) + (c[k][s] ?? 0)
+  return sum
+}
 
 function scoped(head: Run[], c: Scopes, caps: string, showScopes: boolean): Item {
   const n = total(c)
@@ -585,44 +635,84 @@ function scoped(head: Run[], c: Scopes, caps: string, showScopes: boolean): Item
   return pair([...base, d(` (${SCOPES.map((k) => (caps.includes(k) ? String(c[k] ?? 0) : '-')).join('/')})`)], base)
 }
 
-function configRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
+function configRow(x: Inputs, on: (id: string) => boolean, icon: Icon, drill?: string): Section {
   const items: Item[] = []
   const c = x.counts
   if (!c) return { id: 'config', label: 'Config', items, preferDetail: true }
   const scopes = on('config.scopes')
-  const show = (id: string, glyph: string, color: string, s: Scopes, caps = '') => {
-    if (on(`config.${id}`)) items.push(scoped(icon(glyph, color), s, caps, scopes))
+  // A button when there is a list behind the count; underlined while that list is the open one.
+  const button = (id: DrillId, it: Item): Item => {
+    if (!drillEntries(c, id, on).length) return it
+    const mark = (runs: Run[]) => runs.map((r) => ({ ...r, press: `drill:${id}`, ...(drill === id ? { u: true } : {}) }))
+    return { wide: mark(it.wide), narrow: mark(it.narrow) }
   }
-  show('instructions', G.cfgDoc, c256(36), c.instructions, 'mupl')
-  show('memory', G.cfgMemory, c256(177), c.memory)
-  show('agents', G.cfgAgents, c256(211), c.agents, 'mupx')
-  show('commands', G.cfgCmds, c256(32), c.commands, 'upx')
-  show('skills', G.cfgSkills, c256(141), c.skills, 'mupx')
-  show('workflows', G.cfgWorkflows, c256(78), c.workflows, 'upx')
-  show('routines', G.cfgRoutines, c256(173), c.routines, 'up')
-  show('rules', G.cfgRules, c256(33), c.rules, 'up')
-  show('mcp', G.cfgMcp, c256(216), c.mcp, 'muplx')
-  show('connectors', G.cfgConn, c256(117), c.connectors)
-  if (on('config.chrome')) items.push(plain([...icon(G.cfgChrome, c256(75)), v(c.chrome ? OK : NO)]))
-  show('hooks', G.cfgHooks, c256(220), c.hooks, 'muplx')
-  show('plugins', G.cfgPlugins, c256(196), c.plugins, 'mupl')
-  show('themes', G.cfgTheme, c256(213), c.themes, 'ux')
-  show('dirs', G.cfgDirs, c256(250), c.dirs)
+  for (const id of Object.keys(DRILLS) as DrillId[]) {
+    // Chrome sits where it always did, between the connectors and the hooks; it has no list.
+    if (id === 'hooks' && on('config.chrome')) items.push(plain([...icon(G.cfgChrome, c256(75)), v(c.chrome ? OK : NO)]))
+    if (!drillOn(id, on)) continue
+    const k = DRILLS[id]
+    items.push(button(id, scoped(icon(k.glyph, k.color), drillCount(c, id, on), k.caps, scopes)))
+  }
   return { id: 'config', label: 'Config', items, preferDetail: true }
 }
 
-function extsRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
-  const items: Item[] = []
-  const c = x.counts
-  if (!c) return { id: 'exts', label: 'Exts.', items }
-  const show = (id: string, glyph: string, color: string, s: Scopes, caps = '') => {
-    if (on(`exts.${id}`)) items.push(scoped(icon(glyph, color), s, caps, on('config.scopes')))
+/** `name  scope  tokens  note`, the name column as wide as the longest name on screen. */
+function entryLine(e: Entry, nameW: number, hasTokens: boolean, kindWord: boolean): Run[] {
+  const name = truncate(e.name, nameW)
+  const runs: Run[] = [v(name + ' '.repeat(Math.max(0, nameW - cells(name))))]
+  runs.push(d(`  ${(SCOPE_WORD[e.scope ?? ''] ?? '').padEnd(7)}`))
+  if (hasTokens) runs.push(e.tokens === undefined ? d('       –') : v(`  ${formatTokens(e.tokens).padStart(6)}`))
+  const note = [kindWord && e.kind ? EXT_WORD[e.kind] : '', e.note ?? ''].filter(Boolean).join(' · ')
+  if (note) runs.push(d(`  ${note}`))
+  return runs
+}
+
+/**
+ * A drill-down as the Config row's detail: a title (what it is, how many, what they hold in
+ * context), a note about the whole set, and one line per entry. windowDetail shows a window of
+ * the lines and adds the scroll controls to the title.
+ */
+export function drillDetail(c: Counts | null, id: DrillId, room: number, glyphs: boolean, on: (id: string) => boolean = () => true): Pick<Section, 'detail' | 'detailHead' | 'detailTail'> {
+  const all = drillEntries(c, id, on)
+  if (!all.length) return {}
+  const k = DRILLS[id]
+  const hasTokens = all.some((e) => e.tokens !== undefined)
+  const tokens = all.reduce((n, e) => n + (e.tokens ?? 0), 0)
+  const head: Run[] = [...(glyphs ? [{ t: k.glyph, c: k.color }, { t: ' ' }] : []), { t: k.label, b: true }, v(` ${all.length}`)]
+  if (hasTokens) head.push(d(' · '), v(formatTokens(tokens)), d(' tok'))
+  const note = c?.notes?.[id]
+  // The name column: the longest name in the whole list (so it does not jump while scrolling),
+  // within what the line has left after the scope and token columns.
+  const fixed = 9 + (hasTokens ? 8 : 0)
+  const nameW = Math.max(8, Math.min(Math.max(...all.map((e) => cells(e.name))), 44, room - fixed))
+  return { detailHead: head, detailTail: note ? [d(note)] : undefined, detail: all.map((e) => entryLine(e, nameW, hasTokens, id === 'exts')) }
+}
+
+/** A drill-down as drawn: its title line over `rows` entries from `offset`, each within `room`. */
+export function drillLines(c: Counts | null, id: DrillId, offset: number, rows: number, room: number, glyphs: boolean, on: (id: string) => boolean = () => true): Run[][] {
+  const detail = drillDetail(c, id, room, glyphs, on)
+  return detail.detail && rows >= 1 ? windowDetail({ id: 'config', label: 'Config', items: [], ...detail }, offset, rows, room).lines : []
+}
+
+/** The whole list as text, for `/dash config <item>`: one line per entry, grouped by scope. */
+export function drillText(c: Counts | null, id: DrillId, on: (id: string) => boolean = () => true): string {
+  const all = drillEntries(c, id, on)
+  const k = DRILLS[id]
+  if (!all.length) return `${k.label}: none.`
+  const hasTokens = all.some((e) => e.tokens !== undefined)
+  const tokens = all.reduce((n, e) => n + (e.tokens ?? 0), 0)
+  const note = c?.notes?.[id]
+  const lines = [`${k.label}: ${all.length}${hasTokens ? ` · ${formatTokens(tokens)} tokens in context` : ''}${note ? ` · ${note}` : ''}`]
+  for (const s of SCOPES) {
+    const group = all.filter((e) => (e.scope ?? 'x') === s)
+    if (!group.length) continue
+    lines.push('', `${SCOPE_WORD[s]} (${group.length})`)
+    for (const e of group) {
+      const extra = [e.tokens !== undefined ? `${formatTokens(e.tokens)} tok` : '', id === 'exts' && e.kind ? EXT_WORD[e.kind] : '', e.note ?? ''].filter(Boolean).join(' · ')
+      lines.push(`  ${e.name}${extra ? `  (${extra})` : ''}`)
+    }
   }
-  show('lsp', G.cfgLsp, c256(81), c.lsp)
-  show('monitors', G.cfgMonitor, c256(209), c.monitors)
-  show('bin', G.cfgBin, c256(108), c.bin)
-  show('channels', G.cfgChannel, c256(116), c.channels, 'ux')
-  return { id: 'exts', label: 'Exts.', items }
+  return lines.join('\n')
 }
 
 // ── Host ─────────────────────────────────────────────────────────────────────────────────────────

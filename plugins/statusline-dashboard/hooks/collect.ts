@@ -11,7 +11,8 @@
 
 import type { EngineInterface } from 'claude-code'
 
-import type { ApiUsage, Breakdown, Counts, Host, Info, Repo, Scopes, Segment, Usage } from '../types'
+import type { ApiUsage, Breakdown, Counts, Entry, Host, Info, Repo, Scopes, Segment, Usage } from '../types'
+import { formatTokens, homeRelative, truncate } from './layout'
 
 type $ = EngineInterface
 
@@ -53,20 +54,23 @@ async function list($: $, dir: string) {
   }
 }
 
-async function countFiles($: $, dir: string, pattern?: RegExp): Promise<number> {
-  return (await list($, dir)).filter((e) => !pattern || pattern.test(e.name)).length
+async function fileNames($: $, dir: string, pattern?: RegExp): Promise<string[]> {
+  return (await list($, dir)).filter((e) => !pattern || pattern.test(e.name)).map((e) => e.name)
 }
 
-// *.md counted down nested subdirs: agents and rules load that way, subdirs being organizational.
-async function countMdRecursive($: $, dir: string, depth = 0): Promise<number> {
-  if (depth > 6) return 0
-  let n = 0
+// *.md down nested subdirs, as paths under `dir`: agents and rules load that way, subdirs being
+// organizational.
+async function mdFiles($: $, dir: string, depth = 0, under = ''): Promise<string[]> {
+  if (depth > 6) return []
+  const out: string[] = []
   for (const e of await list($, dir)) {
-    if (e.kind === 'dir') n += await countMdRecursive($, join(dir, e.name), depth + 1)
-    else if (/\.md$/i.test(e.name)) n++
+    if (e.kind === 'dir') out.push(...(await mdFiles($, join(dir, e.name), depth + 1, `${under}${e.name}/`)))
+    else if (/\.md$/i.test(e.name)) out.push(under + e.name)
   }
-  return n
+  return out
 }
+
+const stem = (name: string) => name.replace(/\.(md|json|ya?ml|js|ts)$/i, '')
 
 async function run($: $, argv: string[], cwd?: string, timeoutMs = 5000): Promise<string | null> {
   try {
@@ -101,6 +105,9 @@ export async function collectUsage($: $): Promise<Usage | null> {
   }
 }
 
+/** The most entries one drill-down list keeps in $.state. */
+const LIST_MAX = 400
+
 // The engine's word for where an agent/skill was defined → the scope slot it counts in.
 const SOURCE_SCOPE: Record<string, keyof Scopes> = {
   policySettings: 'm',
@@ -112,14 +119,13 @@ const SOURCE_SCOPE: Record<string, keyof Scopes> = {
 // /context's memory-file labels → scope slots. AutoMem is the auto-memory index, counted apart.
 const MEMORY_SCOPE: Record<string, keyof Scopes> = { Managed: 'm', User: 'u', Project: 'p', Local: 'l' }
 
-function tally<T>(rows: readonly T[], scopeOf: (r: T) => keyof Scopes | undefined): Scopes {
+function tally(rows: readonly Entry[]): Scopes {
   const s: Scopes = {}
-  for (const r of rows) {
-    const k = scopeOf(r)
-    if (k) s[k] = (s[k] ?? 0) + 1
-  }
+  for (const r of rows) if (r.scope) s[r.scope] = (s[r.scope] ?? 0) + 1
   return s
 }
+
+const isRule = (path: string) => /\/\.claude\/rules\//.test(path.replace(/\\/g, '/'))
 
 // 'summary' estimates locally and sends no token-count requests.
 export async function collectBreakdown($: $): Promise<Breakdown | null> {
@@ -129,21 +135,38 @@ export async function collectBreakdown($: $): Promise<Breakdown | null> {
     if (!b) return null
     const api = b.apiUsage
     const autoMem = b.memoryFiles.find((f) => f.type === 'AutoMem')
+    // Item by item, for the Config drill-downs; an item whose source has no scope slot (a built-in
+    // or MCP skill) is not counted, so it is not listed either.
+    // Rules files load as instruction files too, but have their own widget: keep them out here.
+    const instructions: Entry[] = b.memoryFiles
+      .filter((f) => MEMORY_SCOPE[f.type] && !isRule(f.path))
+      .map((f) => ({ name: f.path.replace(/\\/g, '/'), scope: MEMORY_SCOPE[f.type], tokens: f.tokens }))
+    const agents: Entry[] = b.agents.filter((a) => SOURCE_SCOPE[a.source]).map((a) => ({ name: a.agentType, scope: SOURCE_SCOPE[a.source], tokens: a.tokens }))
+    const skills: Entry[] = (b.skills?.skillFrontmatter ?? [])
+      .filter((s) => SOURCE_SCOPE[String(s.source)])
+      .map((s) => ({ name: s.name, scope: SOURCE_SCOPE[String(s.source)], tokens: s.tokens, ...(s.pluginName ? { note: s.pluginName } : {}) }))
+    const mcpTools: NonNullable<Breakdown['mcpTools']> = {}
+    for (const t of b.mcpTools) {
+      const m = (mcpTools[t.serverName] ??= { tools: 0, loaded: 0, tokens: 0 })
+      m.tools++
+      if (t.isLoaded) (m.loaded++, (m.tokens += t.tokens))
+    }
     return {
       categories: b.categories.map((c): Segment => ({ name: c.name, tokens: c.tokens, color: c.color, kind: c.kind as Segment['kind'] })),
       totalTokens: b.totalTokens,
       maxTokens: b.rawMaxTokens,
       percentage: b.percentage,
       lastCall: api ? { input: api.input_tokens, output: api.output_tokens, cacheWrite: api.cache_creation_input_tokens, cacheRead: api.cache_read_input_tokens } : null,
-      // Rules files load as instruction files too, but have their own widget: keep them out here.
-      instructions: tally(
-        b.memoryFiles.filter((f) => !/\/\.claude\/rules\//.test(f.path.replace(/\\/g, '/'))),
-        (f) => MEMORY_SCOPE[f.type],
-      ),
+      instructions: tally(instructions),
       memoryDir: autoMem ? dirname(autoMem.path) : undefined,
-      agents: tally(b.agents, (a) => SOURCE_SCOPE[a.source]),
-      skills: tally(b.skills?.skillFrontmatter ?? [], (s) => SOURCE_SCOPE[String(s.source)]),
+      agents: tally(agents),
+      skills: tally(skills),
       mcpServers: [...new Set(b.mcpTools.map((t) => t.serverName))],
+      lists: { instructions, agents, skills: skills.slice(0, LIST_MAX) },
+      ruleTokens: Object.fromEntries(b.memoryFiles.filter((f) => isRule(f.path)).map((f) => [norm(f.path), f.tokens])),
+      mcpTools,
+      skillsListing: b.skills ? { total: b.skills.totalSkills, included: b.skills.includedSkills } : undefined,
+      autoMemTokens: autoMem?.tokens,
     }
   } catch {
     return null
@@ -181,8 +204,8 @@ export function parseGitStatus(out: string) {
   return { branch, ahead, behind, staged, modified, untracked, conflicts }
 }
 
-/** The changed paths in porcelain v2 output, first few kept: `M.` staged, `.M` modified, `??` untracked, `UU` conflict. */
-export function parseChanged(out: string, keep = 5): { files: Array<{ xy: string; path: string }>; changedTotal: number } {
+/** The changed paths in porcelain v2 output, the first `keep` kept (the open Repo row scrolls them): `M.` staged, `.M` modified, `??` untracked, `UU` conflict. */
+export function parseChanged(out: string, keep = 50): { files: Array<{ xy: string; path: string }>; changedTotal: number } {
   const files: Array<{ xy: string; path: string }> = []
   for (const line of out.split('\n')) {
     const f = line.split(' ')
@@ -436,14 +459,24 @@ function managedDir(kind: Host['os']['kind']): string {
   return '/etc/claude-code'
 }
 
-function countHookMap(hooks: unknown): number {
-  if (!hooks || typeof hooks !== 'object') return 0
-  let n = 0
-  for (const groups of Object.values(hooks as Record<string, unknown>)) {
+/**
+ * One entry per hook handler: `Event(matcher)`, and what it runs. The command is cut short: it is
+ * there to tell two hooks apart, not to be read in full (/hooks has that).
+ */
+export function hookEntries(hooks: unknown, scope: keyof Scopes, plugin = ''): Entry[] {
+  if (!hooks || typeof hooks !== 'object') return []
+  const out: Entry[] = []
+  for (const [event, groups] of Object.entries(hooks as Record<string, unknown>)) {
     if (!Array.isArray(groups)) continue
-    for (const g of groups) n += Array.isArray(g?.hooks) ? g.hooks.length : 1
+    for (const g of groups) {
+      const name = typeof g?.matcher === 'string' && g.matcher ? `${event}(${g.matcher})` : event
+      for (const h of Array.isArray(g?.hooks) ? g.hooks : [g]) {
+        const what = typeof h?.command === 'string' ? truncate(h.command, 36) : String(h?.type ?? '')
+        out.push({ name, scope, note: [plugin, what].filter(Boolean).join(' · ') })
+      }
+    }
   }
-  return n
+  return out
 }
 
 const enabledNames = (ep: unknown) =>
@@ -464,7 +497,19 @@ async function settingsOf($: $, source: 'user' | 'project' | 'local' | 'policy')
  * so each plugin's manifest is merged over its marketplace entry.
  */
 async function pluginComponents($: $, home: string, keys: string[], mcpOff: Set<string>) {
-  const out = { agents: 0, commands: 0, skills: 0, hooks: 0, mcps: 0, workflows: 0, lsp: 0, monitors: 0, themes: 0, bin: 0, channelNames: new Set<string>() }
+  const out = {
+    commands: [] as Entry[],
+    hooks: [] as Entry[],
+    mcps: [] as Entry[],
+    workflows: [] as Entry[],
+    themes: [] as Entry[],
+    lsp: [] as Entry[],
+    monitors: [] as Entry[],
+    bin: [] as Entry[],
+    channels: new Map<string, string>(), // channel → the plugin declaring it
+    meta: new Map<string, string>(), // plugin → `v1.2.3 · marketplace`
+  }
+  const of = (names: string[], base: string, kind?: Entry['kind']): Entry[] => names.map((n) => ({ name: stem(n), scope: 'x', note: base, ...(kind ? { kind } : {}) }))
   const installed = await readJson($, join(home, '.claude', 'plugins', 'installed_plugins.json'))
   const marketplaces = new Map<string, any[]>()
   const seen = new Set<string>()
@@ -472,47 +517,48 @@ async function pluginComponents($: $, home: string, keys: string[], mcpOff: Set<
     const [base = key, mp = ''] = key.split('@')
     if (seen.has(base)) continue
     const recs: any[] = Array.isArray(installed?.plugins?.[key]) ? installed.plugins[key] : []
-    const root: string | undefined = recs[recs.length - 1]?.installPath
+    const rec = recs[recs.length - 1]
+    const root: string | undefined = rec?.installPath
     if (!root) continue
     seen.add(base)
+    out.meta.set(base, [rec?.version ? `v${String(rec.version).replace(/^v/, '')}` : '', mp].filter(Boolean).join(' · '))
     if (mp && !marketplaces.has(mp)) {
       const j = await readJson($, join(home, '.claude', 'plugins', 'marketplaces', mp, '.claude-plugin', 'marketplace.json'))
       marketplaces.set(mp, Array.isArray(j?.plugins) ? j.plugins : [])
     }
     const entry = (marketplaces.get(mp) ?? []).find((p) => p?.name === base) ?? {}
     const eff = { ...entry, ...((await readJson($, join(root, '.claude-plugin', 'plugin.json'))) ?? {}) }
-    out.agents += await countMdRecursive($, join(root, 'agents'))
-    out.commands += await countMdRecursive($, join(root, 'commands'))
-    out.skills += await countFiles($, join(root, 'skills'))
-    out.hooks += countHookMap((await readJson($, join(root, 'hooks', 'hooks.json')))?.hooks) + countHookMap(eff.hooks)
+    out.commands.push(...(await mdFiles($, join(root, 'commands'))).map((n): Entry => ({ name: `${base}:${stem(n)}`, scope: 'x' })))
+    out.hooks.push(...hookEntries((await readJson($, join(root, 'hooks', 'hooks.json')))?.hooks, 'x', base), ...hookEntries(eff.hooks, 'x', base))
     // A plugin .mcp.json declares servers at the TOP LEVEL, not under `mcpServers` like a
     // project's; accept either. Servers toggled off in /mcp read "plugin:<base>:<server>".
     const mcpFile = (await readJson($, join(root, '.mcp.json'))) ?? {}
     const servers = { ...(mcpFile.mcpServers && typeof mcpFile.mcpServers === 'object' ? mcpFile.mcpServers : mcpFile), ...(eff.mcpServers ?? {}) }
-    for (const srv of Object.keys(servers)) if (!mcpOff.has(`plugin:${base}:${srv}`)) out.mcps++
+    for (const srv of Object.keys(servers)) if (!mcpOff.has(`plugin:${base}:${srv}`)) out.mcps.push({ name: `plugin:${base}:${srv}`, scope: 'x' })
     // .lsp.json is a top-level language → config map; inline form is eff.lspServers.
     const lsp = (await readJson($, join(root, '.lsp.json'))) ?? {}
     const lspInline = eff.lspServers && typeof eff.lspServers === 'object' && !Array.isArray(eff.lspServers) ? eff.lspServers : {}
-    out.lsp += new Set([...Object.keys(lsp), ...Object.keys(lspInline)]).size
+    out.lsp.push(...of([...new Set([...Object.keys(lsp), ...Object.keys(lspInline)])], base, 'lsp'))
     // Monitors: monitors/monitors.json is an array; an inline array replaces it (a path string is
     // the path form, left uncounted).
     const mon = eff.experimental?.monitors ?? eff.monitors
-    if (Array.isArray(mon)) out.monitors += mon.length
+    const named = (arr: unknown[], word: string) => arr.map((m: any, i) => String((typeof m === 'string' ? m : m?.name || m?.id) || `${word} ${i + 1}`))
+    if (Array.isArray(mon)) out.monitors.push(...of(named(mon, 'monitor'), base, 'monitors'))
     else if (typeof mon !== 'string') {
       const file = await readText($, join(root, 'monitors', 'monitors.json'))
       try {
         const arr = file ? JSON.parse(file) : null
-        if (Array.isArray(arr)) out.monitors += arr.length
+        if (Array.isArray(arr)) out.monitors.push(...of(named(arr, 'monitor'), base, 'monitors'))
       } catch {}
     }
     const themes = eff.experimental?.themes ?? eff.themes
-    if (Array.isArray(themes)) out.themes += themes.length
-    else if (typeof themes !== 'string') out.themes += await countFiles($, join(root, 'themes'), /\.json$/i)
-    out.workflows += await countFiles($, join(root, 'workflows'))
-    out.bin += await countFiles($, join(root, 'bin'))
+    if (Array.isArray(themes)) out.themes.push(...of(named(themes, 'theme'), base))
+    else if (typeof themes !== 'string') out.themes.push(...of(await fileNames($, join(root, 'themes'), /\.json$/i), base))
+    out.workflows.push(...of(await fileNames($, join(root, 'workflows')), base))
+    out.bin.push(...(await fileNames($, join(root, 'bin'))).map((n): Entry => ({ name: n, scope: 'x', note: base, kind: 'bin' })))
     if (Array.isArray(eff.channels)) for (const ch of eff.channels) {
       const name = typeof ch === 'string' ? ch : ch?.name || ch?.id
-      if (name) out.channelNames.add(String(name))
+      if (name && !out.channels.has(String(name))) out.channels.set(String(name), base)
     }
   }
   return out
@@ -536,6 +582,8 @@ export async function collectCounts($: $, home: string, kind: Host['os']['kind']
 
   // Plugins enabled per scope, counted once at the broadest scope enabling them; project and local
   // enablement only takes effect in a trusted workspace.
+  const hm = new Map<string, string>() // base name → the marketplace its enabling key names
+  for (const k of [policy, user, project, local].flatMap((s) => enabledNames(s.enabledPlugins))) hm.set(k.split('@')[0] ?? k, k.split('@')[1] ?? '')
   const pm = new Set(enabledNames(policy.enabledPlugins).map((k) => k.split('@')[0]))
   const pu = new Set(enabledNames(user.enabledPlugins).map((k) => k.split('@')[0]).filter((n) => !pm.has(n)))
   const pp = new Set(trusted ? enabledNames(project.enabledPlugins).map((k) => k.split('@')[0]).filter((n) => !pm.has(n) && !pu.has(n)) : [])
@@ -560,15 +608,20 @@ export async function collectCounts($: $, home: string, kind: Host['os']['kind']
   for (const k of mp) mu.delete(k)
   const managedMcp = { ...((await readJson($, join(managedDir(kind), 'managed-mcp.json')))?.mcpServers ?? {}), ...(policy.mcpServers ?? {}) }
 
-  const dirCount = async (sub: string, recursive: boolean, pattern?: RegExp): Promise<Scopes> => {
-    const count = (d: string) => (recursive ? countMdRecursive($, d) : countFiles($, d, pattern))
-    return { u: await count(join(home, '.claude', sub)), p: proj ? await count(join(proj, '.claude', sub)) : 0 }
+  // A directory-based item type at user and project scope, one entry per file.
+  const dirList = async (sub: string, recursive: boolean, pattern?: RegExp): Promise<Entry[]> => {
+    const names = (d: string) => (recursive ? mdFiles($, d) : fileNames($, d, pattern))
+    const at = async (base: string, scope: 'u' | 'p'): Promise<Entry[]> => (await names(join(base, '.claude', sub))).map((n) => ({ name: stem(n), scope }))
+    return [...(await at(home, 'u')), ...(proj ? await at(proj, 'p') : [])]
   }
-  const gate = (s: Scopes): Scopes => (trusted ? s : { ...s, p: 0, l: 0 })
+  const gate = (es: Entry[]): Entry[] => (trusted ? es : es.filter((e) => e.scope !== 'p' && e.scope !== 'l'))
+  const some = (names: Iterable<string | undefined>, scope: keyof Scopes): Entry[] => [...names].filter((n): n is string => !!n).map((name) => ({ name, scope }))
+  // Every scope slot the type can hold reads a number, 0 included (the row prints them all).
+  const count = (es: Entry[], slots: string): Scopes => ({ ...Object.fromEntries([...slots].map((k) => [k, 0])), ...tally(es) })
 
   // Auto-memory: the memory files beside the loaded index (MEMORY.md is the index, not a memory).
   const memDir = b?.memoryDir
-  const memFiles = memDir ? (await list($, memDir)).filter((e) => /\.md$/i.test(e.name) && e.name !== 'MEMORY.md').length : 0
+  const memFiles = memDir ? (await fileNames($, memDir, /\.md$/i)).filter((n) => n !== 'MEMORY.md') : []
 
   // Message channels installed at user scope live in ~/.claude/channels/<name>/ (a non-empty dir
   // is a configured one); a plugin-declared channel already installed counts once, as user.
@@ -578,30 +631,75 @@ export async function collectCounts($: $, home: string, kind: Host['os']['kind']
 
   const addDirs = (await $.settings.read({ key: 'permissions' }).catch(() => undefined)) as { additionalDirectories?: unknown } | undefined
 
+  // What a server's tools hold in the window: the engine lists a server only once it connected
+  // with tools, so one with nothing to say is configured but not (yet) serving any.
+  const withTools = (e: Entry): Entry => {
+    const t = b?.mcpTools?.[e.name]
+    if (!t) return b?.mcpTools ? { ...e, note: 'no tools in context' } : e
+    return { ...e, tokens: t.tokens, note: t.loaded < t.tools ? `${t.tools} tools, ${t.loaded} loaded` : `${t.tools} tools` }
+  }
+  // A rules file with `paths:` loads only beside matching files: the ones in context have tokens.
+  const rules = (await dirList('rules', true)).map((e): Entry => {
+    const tokens = b?.ruleTokens?.[norm(join(e.scope === 'u' ? home : proj, '.claude', 'rules', `${e.name}.md`))]
+    return tokens === undefined ? (b?.ruleTokens ? { ...e, note: 'not loaded' } : e) : { ...e, tokens }
+  })
+  const lists: Record<string, Entry[]> = {
+    instructions: (b?.lists?.instructions ?? []).map((e) => ({ ...e, name: homeRelative(e.name, home) })),
+    memory: some(memFiles.map(stem), 'u'),
+    agents: b?.lists?.agents ?? [],
+    commands: [...gate(await dirList('commands', false, /\.md$/i)), ...plug.commands],
+    skills: b?.lists?.skills ?? [],
+    workflows: [...gate(await dirList('workflows', false)), ...plug.workflows],
+    routines: gate(await dirList('routines', false)),
+    rules,
+    mcp: gate([...some(Object.keys(managedMcp), 'm'), ...some(mu, 'u'), ...some(mp, 'p'), ...some(ml, 'l'), ...plug.mcps]).map(withTools),
+    // Account-level claude.ai connectors: the connected servers the engine lists under that name.
+    connectors: some(sessionMcp.filter((s) => /^claude\.ai /i.test(s)), 'u').map(withTools),
+    hooks: gate([...hookEntries(policy.hooks, 'm'), ...hookEntries(user.hooks, 'u'), ...hookEntries(project.hooks, 'p'), ...hookEntries(local.hooks, 'l'), ...plug.hooks]),
+    plugins: [...some(pm, 'm'), ...some(pu, 'u'), ...some(pp, 'p'), ...some(pl, 'l')].map((e) => ({ ...e, note: plug.meta.get(e.name) ?? (hm.get(e.name) ? `${hm.get(e.name)} · not installed` : 'not installed') })),
+    themes: [...some((await fileNames($, join(home, '.claude', 'themes'), /\.json$/i)).map(stem), 'u'), ...plug.themes],
+    dirs: some(arr(addDirs?.additionalDirectories).map((d) => homeRelative(String(d), home)), 'l'),
+    exts: [
+      ...plug.lsp,
+      ...plug.monitors,
+      ...plug.bin,
+      ...[...userChans].map((name): Entry => ({ name, scope: 'u', kind: 'channels' })),
+      ...[...plug.channels].filter(([n]) => !userChans.has(n)).map(([name, base]): Entry => ({ name, scope: 'x', note: base, kind: 'channels' })),
+    ],
+  }
+  for (const k of Object.keys(lists)) lists[k] = (lists[k] ?? []).slice(0, LIST_MAX)
+  const of = (id: string) => lists[id] ?? []
+  const ext = (kind: Entry['kind']) => of('exts').filter((e) => e.kind === kind)
+  const notes: Record<string, string> = {}
+  const sl = b?.skillsListing
+  if (sl && sl.included < sl.total) notes.skills = `${sl.included} of ${sl.total} fit the listing budget`
+  if (b?.autoMemTokens) notes.memory = `index ${formatTokens(b.autoMemTokens)} tok in context, files read on demand`
+
   return {
     trusted,
     instructions: b?.instructions ?? {},
-    memory: { u: memFiles },
+    memory: { u: memFiles.length },
     agents: b?.agents ?? {},
-    commands: { ...gate(await dirCount('commands', false, /\.md$/i)), x: plug.commands },
+    commands: count(of('commands'), 'upx'),
     skills: b?.skills ?? {},
-    workflows: { ...gate(await dirCount('workflows', false)), x: plug.workflows },
-    routines: gate(await dirCount('routines', false)),
-    rules: await dirCount('rules', true),
-    mcp: gate({ m: Object.keys(managedMcp).length, u: mu.size, p: mp.size, l: ml.size, x: plug.mcps }),
-    // Account-level claude.ai connectors: the connected servers the engine lists under that name.
-    connectors: { u: sessionMcp.filter((s) => /^claude\.ai /i.test(s)).length },
+    workflows: count(of('workflows'), 'upx'),
+    routines: count(of('routines'), 'up'),
+    rules: count(of('rules'), 'up'),
+    mcp: count(of('mcp'), 'muplx'),
+    connectors: count(of('connectors'), 'u'),
     // claude-in-chrome counts as enabled only with the extension installed, the toggle on and
     // onboarding done — all readable locally. Live "connected" is session-only.
     chrome: cj?.cachedChromeExtensionInstalled === true && cj?.claudeInChromeDefaultEnabled === true && cj?.hasCompletedClaudeInChromeOnboarding === true,
-    hooks: gate({ m: countHookMap(policy.hooks), u: countHookMap(user.hooks), p: countHookMap(project.hooks), l: countHookMap(local.hooks), x: plug.hooks }),
-    plugins: { m: pm.size, u: pu.size, p: pp.size, l: pl.size },
-    themes: { u: await countFiles($, join(home, '.claude', 'themes'), /\.json$/i), x: plug.themes },
-    dirs: { l: arr(addDirs?.additionalDirectories).length },
-    lsp: { x: plug.lsp },
-    monitors: { x: plug.monitors },
-    bin: { x: plug.bin },
-    channels: { u: userChans.size, x: [...plug.channelNames].filter((n) => !userChans.has(n)).length },
+    hooks: count(of('hooks'), 'muplx'),
+    plugins: count(of('plugins'), 'mupl'),
+    themes: count(of('themes'), 'ux'),
+    dirs: count(of('dirs'), 'l'),
+    lsp: count(ext('lsp'), 'x'),
+    monitors: count(ext('monitors'), 'x'),
+    bin: count(ext('bin'), 'x'),
+    channels: count(ext('channels'), 'ux'),
+    lists,
+    notes,
   }
 }
 

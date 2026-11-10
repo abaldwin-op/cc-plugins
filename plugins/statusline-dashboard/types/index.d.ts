@@ -28,6 +28,20 @@ export type Segment = {
 /** Where a loaded item came from: managed, user, project, local, plugin. */
 export type Scopes = { m?: number; u?: number; p?: number; l?: number; x?: number }
 
+/**
+ * One loaded item in a Config drill-down: what it is called, where it came from, and whatever the
+ * engine or the disk says about it (its estimated context tokens, a version, a hook's command).
+ */
+export type Entry = {
+  name: string
+  scope?: keyof Scopes
+  /** Estimated tokens it holds in the context window, where the engine's breakdown lists it. */
+  tokens?: number
+  note?: string
+  /** Plugin-component entries only: which `exts.*` widget it belongs to. */
+  kind?: 'lsp' | 'monitors' | 'bin' | 'channels'
+}
+
 /** The context breakdown (`$.session.usage({ breakdown: 'summary' })`), boiled down. */
 export type Breakdown = {
   categories: Segment[]
@@ -45,6 +59,16 @@ export type Breakdown = {
   skills: Scopes
   /** Connected MCP servers by name; `claude.ai …` connectors among them. */
   mcpServers: string[]
+  /** For the Config drill-downs: the same items one by one, each with its tokens. */
+  lists?: { instructions: Entry[]; agents: Entry[]; skills: Entry[] }
+  /** Tokens of each loaded rules file, by its path (forward slashes, lower case). */
+  ruleTokens?: Record<string, number>
+  /** Each connected server's tools: how many, how many are in the window now, and their tokens. */
+  mcpTools?: Record<string, { tools: number; loaded: number; tokens: number }>
+  /** The skill listing: how many skills the session has, and how many fit the listing's budget. */
+  skillsListing?: { total: number; included: number }
+  /** The auto-memory index's tokens (the index loads; the memory files beside it do not). */
+  autoMemTokens?: number
 }
 
 /** What the model row shows beyond the model name. */
@@ -118,6 +142,10 @@ export type Counts = {
   monitors: Scopes
   bin: Scopes
   channels: Scopes
+  /** For the drill-downs: the items behind each count, by drill id (`skills`, `mcp`, `exts`, …). */
+  lists?: Record<string, Entry[]>
+  /** A line of context for a drill-down's header (`listed 98 of 104`), by drill id. */
+  notes?: Record<string, string>
 }
 
 /** The OAuth usage API's extra gauges: model-scoped weekly caps and usage credits. */
@@ -166,8 +194,11 @@ export type Activity = {
   turns?: Array<{ ms: number; output: number; input: number; cacheRead: number }>
 }
 
-/** The person's view of the band: shown or not, and which rows are open (oldest first). */
-export type View = { isVisible: boolean; expanded: string[] }
+/**
+ * The person's view of the band: shown or not, which rows are open (oldest first), and which
+ * Config item is drilled into (its list drawn under the row).
+ */
+export type View = { isVisible: boolean; expanded: string[]; drill?: string }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -186,6 +217,11 @@ declare module 'claude-code' {
       config: unknown
       /** Bumped every minute so the clock, countdowns and pace redraw with nothing else changing. */
       tick: number
+      /**
+       * Where the person scrolled each open row's detail to (its first line), by row id; a row
+       * they have not scrolled has no entry and stands where the row says (the top, or the newest line).
+       */
+      scroll: Record<string, number>
     }
   }
 }

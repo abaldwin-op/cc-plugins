@@ -18,7 +18,7 @@ it's gone.
            ~ plugins/statusline-dashboard/hooks/layout.ts
            ? notes.md
   Info.     ~/src/cc-plugins |  v2.1.310 |  abcd1234
-+ Turn Activity Config Exts. Host
++ Turn Activity Config Host
 ```
 
 ## Install
@@ -40,6 +40,9 @@ view. Run `/plugin uninstall context-bar@cc-plugins`.
 | Click a row's `▸`/`▾` label (fullscreen), or `ctrl+x tab` then Tab and Enter | Open or close that row. Only rows with more to show have the arrow; a row without one is already whole. |
 | `/dash` | Show or hide the whole dashboard. Your choice is remembered across sessions. |
 | `/dash <row>` | Open or close one row (`/dash config`) |
+| Click a Config item (its icon or count), or Tab to it and Enter | Open that item's list under the row: what the count is made of, one per line. Click it again to close, or another item to swap. |
+| Mouse wheel over the dashboard, or a row's `▲` `▼` | Scroll an open row's detail when it has more than fits. The wheel moves the row you opened last; each row's `▲` `▼` page that row. |
+| `/dash config <item>` | Print the item's whole list in the transcript and open it in the row: `/dash config skills`. Items: `instructions`, `memory`, `agents`, `commands`, `skills`, `workflows`, `routines`, `rules`, `mcp`, `connectors`, `hooks`, `plugins`, `themes`, `dirs`, `exts`. |
 | `/dash open all` · `/dash close all` | Open or close every row |
 | `/dash cleanup` | Remove the 1.x `statusLine` / `subagentStatusLine` blocks from `settings.json` (the agent panel's rows are now the [agent-panel](../agent-panel/) plugin) |
 | `ctrl+x ctrl+a` | Claude Code's own collapse for the band above the prompt |
@@ -57,13 +60,20 @@ it's up.
   - **Model**: the context window broken down by category, as `/context` shows it — a stacked
     bar, one color per category, and a legend.
   - **Turn**: the last five turns — duration, output, input and how much of it came from the cache.
-  - **Activity**: the todo list around the current item, and the last five tool calls, one per
-    line with what each acted on (✔ answered, ✘ failed, … running; repeats collapse to `×n`).
-  - **Agents**: the session's last six sub-agents and teammates in the order they started, each
+  - **Activity**: the todo list, starting around the current item, and the last eight tool calls,
+    one per line with what each acted on (✔ answered, ✘ failed, … running; repeats collapse to
+    `×n`).
+  - **Agents**: the session's last twenty sub-agents and teammates in the order they started, each
     with a robot (sub-agent) or person (teammate), its type or name, its task and where it stands.
     The dashboard keeps this history itself, because Claude Code's agent list drops an agent soon
     after it finishes.
-  - **Repo**: the last commit and the first changed files.
+  - **Repo**: the last commit and the changed files (the first fifty).
+  - **Config**: the list behind whichever item you clicked (see below).
+- **Scrolling.** An open row's detail is a window of up to eight lines, about half the
+  dashboard. When there is more, a line of controls appears above it (`3–7 of 20  ▲  ▼`, or on
+  a Config list's title) and the detail scrolls under the wheel or the `▲` `▼`. The dashboard
+  itself never scrolls. Histories (Turn, Agents) start at their newest line and keep following
+  it until you scroll; closing a row puts its window back.
 - **Height budget.** In fullscreen the dashboard takes what the bottom slot has left. On the main
   screen it takes at most a third of the terminal, so the conversation keeps its room. Over
   budget, in this order:
@@ -102,10 +112,10 @@ it's up.
   clickable. `gh` runs at most every five minutes per branch.
 - **Config**: what's loaded, each item broken down by scope (see below): instruction files
   (CLAUDE.md / AGENTS.md), auto-memory files, agents, commands, skills, workflows, routines,
-  rules, MCP servers, claude.ai connectors, claude-in-chrome, hooks, plugins, themes, and added
-  directories.
-- **Exts.**: plugin-only component types: LSP servers, background monitors, `bin/` executables,
-  and message channels.
+  rules, MCP servers, claude.ai connectors, claude-in-chrome, hooks, plugins, themes, added
+  directories, and plugin components (the plugin-only types: LSP servers, background monitors,
+  `bin/` executables and message channels, which were the Exts. row before 2.1). Every count with
+  something behind it is a button that **opens its list**.
 - **Host**: clock, OS and version, `user@host`, and how many *other* Claude Code sessions are live
   on this machine.
 - **Info.**: current directory (leaf kept when long), output style, Claude Code version, agent
@@ -114,6 +124,35 @@ it's up.
 Instruction files, agents, skills, MCP servers and the sub-agent roster come straight from
 Claude Code: what is actually loaded, with trust and precedence applied. The rest is counted from
 disk and gated on workspace trust the same way Claude Code gates loading.
+
+### What a Config item's list shows
+
+```
+▾ Config   󰈙 2 (0/1/1/0) | 󰁨 104 (0/3/2/99) | 󰒋 3 (0/1/1/0/1) | 󰛢 17 (0/0/0/0/17) | …
+           󰁨 Skills 104 · 5.2K tok  1–5  ▲  ▼   98 of 104 fit the listing budget
+           plugin-authoring  plugin      212  cc-tools
+           deploy            project     140
+           …
+```
+
+The header has the count, what the items hold in the context window (where Claude Code measures
+it), where the window stands, and anything worth knowing about the whole set. Then one line per
+item: name, scope, tokens, and a note. Items that cost context come heaviest first; the rest go
+broadest scope first, then by name.
+
+| Item | Per line |
+| --- | --- |
+| Instruction files | Path, scope, tokens |
+| Memory files | Name. The header has the index's tokens: the index is in context, the files are read on demand. |
+| Agents | Type, scope, tokens of its description |
+| Skills | Name, scope, tokens of its listing, the plugin it comes from. The header says when not every skill fit the listing budget. |
+| Rules | Path under `rules/`, scope, tokens when loaded, `not loaded` when not (a rule with `paths:` loads beside matching files only) |
+| MCP servers, Connectors | Name, scope, tokens of its tool schemas, tool count (and how many are loaded when tools load on demand), `no tools in context` for a server that is configured but serving none |
+| Hooks | `Event(matcher)`, scope, the plugin it comes from and the start of its command |
+| Plugins | Name, scope, version and marketplace, or `not installed` |
+| Commands, Workflows, Routines, Themes | Name, scope, the plugin it comes from |
+| Added directories | Path |
+| Plugin components | Name, scope, its type (LSP, monitor, bin, channel) and plugin |
 
 ### Reading the `(0/1/1/0/-)` scope breakdown
 
@@ -174,7 +213,7 @@ The file lives outside the plugin, so updates and uninstalls never touch it.
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `rows` | all rows | Which rows render, and in what order: `model`, `limits`, `usage`, `turn`, `activity`, `agents`, `repo`, `config`, `exts`, `host`, `info`. |
+| `rows` | all rows | Which rows render, and in what order: `model`, `limits`, `usage`, `turn`, `activity`, `agents`, `repo`, `config`, `host`, `info`. |
 | `hide` | `[]` | Row ids or individual widget ids to drop (listed below). |
 | `expanded` | `[]` | Rows open by default, until you first open or close one yourself. |
 | `labels` | `true` | `false` drops the row labels. The ▸/▾ toggles stay. |
@@ -197,10 +236,13 @@ Widget ids for `hide`:
 | Activity | `activity.command` `activity.todo` `activity.tool` `activity.lines` |
 | Agents | `agents.subagents` `agents.team` `agents.history` |
 | Repo | `repo.remote` `repo.worktree` `repo.branch` `repo.pr` `repo.tag` `repo.files` |
-| Config | `config.instructions` `config.memory` `config.agents` `config.commands` `config.skills` `config.workflows` `config.routines` `config.rules` `config.mcp` `config.connectors` `config.chrome` `config.hooks` `config.plugins` `config.themes` `config.dirs` `config.scopes` |
-| Exts. | `exts.lsp` `exts.monitors` `exts.bin` `exts.channels` |
+| Config | `config.instructions` `config.memory` `config.agents` `config.commands` `config.skills` `config.workflows` `config.routines` `config.rules` `config.mcp` `config.connectors` `config.chrome` `config.hooks` `config.plugins` `config.themes` `config.dirs` `config.exts` `config.scopes` `exts.lsp` `exts.monitors` `exts.bin` `exts.channels` |
 | Host | `host.clock` `host.os` `host.user` `host.fleet` |
 | Info. | `info.cwd` `info.style` `info.version` `info.agent` `info.session` |
+
+`config.exts` hides the plugin-components item; an `exts.*` id keeps that one type out of its count
+and list. `exts` in `rows` or `hide` (the row it was before 2.1) is still read: in `rows` it does
+nothing, in `hide` it hides the item.
 
 Unknown keys and ids are ignored. A file that isn't valid JSON falls back to the defaults, so a
 typo never blanks the dashboard. `CLAUDE_STATUSLINE_CONFIG` points it at a different file.
@@ -222,7 +264,7 @@ ever blocks a render on git, the disk or the network.
 | `session.start`, `/clear`, `/resume`, compaction | Everything. The slow parts run off the event, so the first prompt never waits. |
 | `session.measure` (after each turn, when a rate-limit window moves) | Usage, plus the context breakdown when it changed |
 | `turn.step` (each model request) | Effort level and API time |
-| `turn.complete` | Tokens, cache ratio, then git and the config counts |
+| `turn.complete` | Tokens, cache ratio, then git and the config counts and lists |
 | `tool.call` | Activity: last tool, todos and tasks, edit lines |
 | Every minute | Clock, countdowns, pace, other sessions, git, the usage API (at most every 5 minutes) |
 
@@ -231,4 +273,5 @@ request itself, so the token never reaches the mod.
 
 Tests: `claude plugin test plugins/statusline-dashboard` covers the layout arithmetic (width,
 height budget, the breakdown bar), the parsers, the activity bookkeeping, drawing on both
-surfaces, toggling rows, `/dash`, the user config, and the 1.x cleanup.
+surfaces, toggling rows, the Config lists (what they hold, opening one, scrolling it), `/dash`, the
+scrolling of any open row, the user config, and the 1.x cleanup.

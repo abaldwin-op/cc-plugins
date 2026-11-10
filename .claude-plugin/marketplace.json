@@ -9,7 +9,7 @@
     {
       "name": "statusline-dashboard",
       "source": "./plugins/statusline-dashboard",
-      "description": "Mod: an opinionated dashboard above the prompt with collapsible rows — context with a per-category breakdown, rate-limit windows with pace balance, cost, activity and sub-agents, git/PR, and config-scope breakdowns. Requires Claude Code 2.1.299+.",
+      "description": "Mod: an opinionated dashboard above the prompt with collapsible rows — context with a per-category breakdown, rate-limit windows with pace balance, cost, activity and sub-agents, git/PR, and config-scope breakdowns with a scrollable list behind each count. Requires Claude Code 2.1.299+.",
       "category": "productivity",
       "tags": [
         "mod",
