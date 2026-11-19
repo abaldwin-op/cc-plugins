@@ -93,6 +93,33 @@ key must be declared in `types/index.d.ts`.
   **Adding an item** = an entry list in `collectCounts`, a `DRILLS` entry, its `Counts` field, the
   README's item table and the configure skill. Exts. was a row until 2.1 and is the `exts` item
   now; its `exts.*` hide ids and a bare `exts` still work.
+- **Model row controls.** The name, the effort and the lamp are Buttons. `open:model` and
+  `open:effort` run `/model` and `/effort` (`$.command.run`), opening Claude Code's own pickers:
+  no API lists the versioned models `/model` offers (the `/config` `model` row's options are only
+  the aliases) or the levels a model takes, so don't draw lists of them — both were tried and
+  taken out. `toggle:thinking` flips the `/config` row `thinking` with `$.config.set` (state in the
+  `controls` atom); that row is locked on models that can't turn thinking off (Fable), so the lamp
+  stays a button and a locked press says why. The lamp follows the row, not the setting: an
+  observing `config.set` hook on `thinking` hears a change made in `/config` itself as it is
+  written, and `refreshBreakdown` (after every turn) reads the row first, so it can't put the
+  setting's older answer back. A session-only switch (meta+t, `chat:thinkingToggle`) writes no
+  setting and raises no event, so the row is also re-read every 2 s (`CONTROLS_MS`), writing only
+  on a change. A change the engine refuses is never swallowed:
+  `say()` shows it as a line above the band's first row for a few seconds (the `notice` atom, one
+  line of the budget), not as a toast, which lands in the far corner of the screen.
+- **The effort shown.** `Model.effortNow` is the engine's own word only: `turn.step`'s `e.effort`,
+  or the level `/effort`'s answer names (`effortSaid`). That answer is read from the row it
+  leaves in the conversation (`session.append`, doors `command`/`notice`), which arrives however
+  the command was run; the command's own result does not carry it for the picker, and polling the
+  saved setting was tried and did not work. `Model.effortSaved` is the level a session starts at
+  (env, else the `effortLevel` setting), drawn dim, only while `effortNow` is unknown. Never
+  write a setting into `effortNow`: the two part after an in-session `/effort`, and the row then
+  contradicts the picker (it happened).
+- **Other clickables.** The last commit's short id is a `Run.href` to its page on the host
+  (`commitUrl`: GitHub, GitLab, Bitbucket), only when `git branch -r --contains HEAD` finds a
+  remote branch holding it — unpushed, the page is a 404. The Info. row's folder is a Button
+  (`reveal:cwd`) that runs the platform's opener (`open` / `explorer` / `xdg-open`) with the path
+  as one argv entry.
 - **Adding a row** = a builder in `sections.ts`, an id in `ROW_IDS` and `DROP_ORDER`, the README
   row list and table, and the configure skill.
 - Glyphs only on the `terminal` surface (desktop has no Nerd Font); semantic colors are theme

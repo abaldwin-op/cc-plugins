@@ -82,7 +82,7 @@ export function windowDetail(s: Section, offset: number | undefined, rows: numbe
   const head: Run[] = [...(s.detailHead ?? [])]
   if (total > rows) {
     const range = `${from + 1}–${from + rows}`
-    head.push({ t: head.length ? `  ${range} ` : `${range} of ${total} `, d: true })
+    head.push({ t: `${head.length ? '  ' : ''}${range} of ${total} `, d: true })
     const arrow = (t: string, on: boolean, dir: number): Run => (on ? { t, c: 'suggestion', press: `page:${s.id}:${dir}` } : { t, d: true })
     head.push(arrow(' ▲ ', from > 0, -1), arrow(' ▼ ', from + rows < total, 1))
   }

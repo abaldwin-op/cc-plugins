@@ -3,8 +3,8 @@ import type { On } from 'claude-code'
 
 import { hookEntries, legacyKeys, parseApiUsage, parseChanged, parseGitStatus, parseLastCommit, parseRemote, parseTag } from '../hooks/collect'
 import { DROP_ORDER, ROW_IDS, bar, cells, clampScroll, legendLines, listRows, pace, packSection, plan, runsWidth, stack, stackRuns, stripLabels, windowDetail, type Section } from '../hooks/layout'
-import { editLines, emptyActivity, mergeAgents, recordTool, toolTarget } from '../hooks/register'
-import { buildSections, drillEntries, drillLines, drillText, parseConfig } from '../hooks/sections'
+import { editLines, effortSaid, emptyActivity, startEffort, mergeAgents, recordTool, toolTarget } from '../hooks/register'
+import { buildSections, commitUrl, drillEntries, drillLines, drillText, parseConfig } from '../hooks/sections'
 import type { Counts, Entry } from '../types'
 
 // ── fixtures ─────────────────────────────────────────────────────────────────────────────────────
@@ -88,6 +88,7 @@ const fail = () => ({ value: { exitCode: 1, stdout: '', stderr: '', isStdoutTrun
 // `beneath` stands for whatever draws under the plugin in the band (another mod's note, a survey);
 // left out, or answering nothing, it is the engine's own node, which draws nothing there.
 type Beneath = ($: any, e: any) => unknown
+type Menu = { rows?: Array<{ key: string; label: string; kind: string; value: unknown; options?: string[]; provider: unknown; isLocked: boolean }>; deny?: Record<string, string>; set?: Array<[string, unknown]>; ran?: string[]; says?: string }
 type Dirs = Record<string, Array<{ name: string; kind: 'file' | 'dir' }>>
 function engine(on: On, files: Record<string, string> = {}, store: Record<string, unknown> = {}, beneath?: Beneath, dirs: Dirs = {}, settings: Record<string, unknown> = {}) {
   const clock = mock.clock(on, { now: 3600e3 })
@@ -108,7 +109,23 @@ function engine(on: On, files: Record<string, string> = {}, store: Record<string
   on('session.version', () => ({ value: { version: '2.1.310' } }))
   on('session.authorize', () => ({ value: null }))
   on('settings.read', ($, e) => ({ value: (settings[String(e.source)] ?? {}) as never }))
+  // (a `{ key }` read is the merged object's read, projected by the engine)
   on('agent.list', () => ({ value: [] }))
+  // Claude Code's /config menu, as far as the Model row reads and sets it; `menu` is the fixture a
+  // test passes in `settings.menu`, and it records what was set and which commands were run.
+  const menu = (settings.menu ?? {}) as Menu
+  on('config.list', () => ({ value: (menu.rows ?? []) as never }))
+  on('config.set', ($, e) => {
+    if (menu.deny?.[e.key]) return { deny: menu.deny[e.key] as string }
+    ;(menu.set ??= []).push([e.key, e.value])
+    const row = menu.rows?.find((r) => r.key === e.key)
+    if (row) row.value = e.value as never
+    return { value: e.value }
+  })
+  on('command.run', ($, e) => {
+    ;(menu.ran ??= []).push(`/${e.command} ${e.args}`.trim())
+    return { text: menu.says ?? 'ok' }
+  })
   on('fs.list', ($, e) => ({ value: (dirs[e.path] ?? []) as never }))
   on('fs.read', ($, e) => {
     const text = files[e.path]
@@ -117,6 +134,7 @@ function engine(on: On, files: Record<string, string> = {}, store: Record<string
   on('process.run', ($, e) => {
     const cmd = e.argv.join(' ')
     if (cmd.startsWith('uname')) return ok('Linux\n')
+    if (cmd.startsWith('xdg-open')) return files['no opener'] ? fail() : ((files.opened = e.argv[1] ?? ''), ok(''))
     if (cmd.includes('status --porcelain')) return ok(files['git status'] ?? '# branch.oid abc\n# branch.head main\n# branch.ab +2 -0\n1 M. N... 100644 100644 100644 a b f\n? new.txt\n')
     if (cmd.includes('rev-parse')) return ok('/work\n/work/.git\n')
     if (cmd.includes('remote get-url')) return ok('git@github.com:me/work.git\n')
@@ -147,7 +165,7 @@ test('the context stack fills the width exactly, skips deferred rows, and keeps 
 
 test('a packed row never exceeds the width, whatever the width', () => {
   const cfg = parseConfig({})
-  const x = { usage: null, breakdown: null, model: { name: 'Opus 4.7', effort: 'xhigh', thinking: true, fast: true }, repo: null, host: { os: { kind: 'linux' as const, label: 'Debian 12' }, user: 'me', host: 'box', fleet: ['a', 'b', 'c'] }, info: { cwd: '/home/me/src/some/very/deeply/nested/project/dir', home: '/home/me', version: '2.1.310', sessionId: 'abcd-1' }, counts: null, api: null, activity: emptyActivity(), now: 0 }
+  const x = { usage: null, breakdown: null, model: { name: 'Opus 4.7', effortNow: 'xhigh', thinking: true, fast: true }, repo: null, host: { os: { kind: 'linux' as const, label: 'Debian 12' }, user: 'me', host: 'box', fleet: ['a', 'b', 'c'] }, info: { cwd: '/home/me/src/some/very/deeply/nested/project/dir', home: '/home/me', version: '2.1.310', sessionId: 'abcd-1' }, counts: null, api: null, activity: emptyActivity(), now: 0 }
   for (const glyphs of [true, false]) {
     for (const width of [20, 33, 47, 80, 140]) {
       for (const s of buildSections(x, cfg, glyphs)) {
@@ -243,13 +261,13 @@ test('a drill-down lists a window of entries, heaviest first, and never past the
   expect(drillEntries(c, 'skills').slice(0, 2).map((e) => e.name)).toEqual(['skill-29', 'skill-28'])
   const top = text(drillLines(c, 'skills', 0, 5, 80, false))
   expect(top.length).toBe(6) // the header and five entries
-  expect(top[0]).toMatch(/^Skills 30 · 4\.3K tok {2}1–5 /)
+  expect(top[0]).toMatch(/^Skills 30 · 4\.3K tok {2}1–5 of 30 /)
   expect(top[0]).toMatch(/28 of 30 fit/)
   expect(top[1]).toMatch(/^skill-29 +plugin +290 {2}kit$/)
   // Scrolled: the window moves, and stops at the last full one however far it is asked to go.
   expect(text(drillLines(c, 'skills', 3, 5, 80, false))[1]).toMatch(/^skill-26/)
   const end = text(drillLines(c, 'skills', 999, 5, 80, false))
-  expect(end[0]).toMatch(/26–30/)
+  expect(end[0]).toMatch(/26–30 of 30/)
   expect(end[5]).toMatch(/^skill-00 +user +0$/)
   expect(clampScroll(-4, 30, 5)).toBe(0)
   expect(clampScroll(99, 30, 5)).toBe(25)
@@ -327,6 +345,21 @@ test('any open row scrolls the detail that does not fit, from where the row says
   const [act, ag] = [built.find((s) => s.id === 'activity'), built.find((s) => s.id === 'agents')]
   expect([act?.detail?.length, act?.detailAt]).toEqual([9 + 7 + 1, 4]) // TodoWrite's own call is a tool line too; the window starts at the last done todo
   expect([ag?.detail?.length, ag?.detailAt]).toEqual([12, 'end'])
+})
+
+test('the last commit links to its page on the host once it is pushed', () => {
+  const gh = { host: 'github.com', owner: 'me', name: 'work' }
+  expect(commitUrl(gh, 'abc1234')).toBe('https://github.com/me/work/commit/abc1234')
+  expect(commitUrl({ host: 'gitlab.com', owner: 'g/sub', name: 'r' }, 'abc1234')).toBe('https://gitlab.com/g/sub/r/-/commit/abc1234')
+  expect(commitUrl({ host: 'bitbucket.org', owner: 'o', name: 'r' }, 'abc1234')).toBe('https://bitbucket.org/o/r/commits/abc1234')
+  expect(commitUrl({ host: 'git.example.com', owner: 'o', name: 'r' }, 'abc1234')).toBeUndefined()
+  const sha = (pushed: boolean, remote: unknown = gh) => {
+    const repo = { name: 'work', branch: 'main', ahead: 0, behind: 0, staged: 0, modified: 0, untracked: 0, conflicts: 0, remote, lastCommit: { sha: 'abc1234', subject: 'Fix', at: 0, pushed } }
+    return buildSections({ repo, now: 0 } as never, parseConfig({ rows: ['repo'] }), false).find((s) => s.id === 'repo')?.detail?.[0]?.[0]
+  }
+  expect(sha(true)?.href).toBe('https://github.com/me/work/commit/abc1234')
+  expect(sha(false)?.href).toBeUndefined() // not pushed: the page would be a 404
+  expect(sha(true, null)?.href).toBeUndefined() // no remote to link to
 })
 
 // ── parsers and bookkeeping ──────────────────────────────────────────────────────────────────────
@@ -622,5 +655,119 @@ test('an open Repo row scrolls its changed files; closing the row puts the windo
   await ui.press({ key: 'row:repo' })
   await ui.press({ key: 'row:repo' })
   expect(await has('1–5 of 30 ')).toBe(true)
+  await ui.unmount()
+})
+
+test('the Model row: the name opens /model, the lamp toggles thinking', async ($, on) => {
+  const menu: Menu = { rows: [{ key: 'thinking', label: 'Thinking mode', kind: 'boolean', value: true, provider: { plugin: 'engine', tier: 'core' }, isLocked: false }] }
+  const clock = engine(on, {}, {}, undefined, {}, { menu })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // No API lists the models /model offers, so the name runs the command itself.
+  await ui.press({ key: 'item:open:model' })
+  expect(menu.ran).toEqual(['/model'])
+  // The lamp flips thinking through the menu's own row; a refusal changes nothing.
+  await ui.press({ key: 'item:toggle:thinking' })
+  await ui.press({ key: 'item:toggle:thinking' })
+  expect(menu.set).toEqual([['thinking', false], ['thinking', true]])
+  menu.deny = { thinking: "can't be turned off for this model" }
+  await ui.press({ key: 'item:toggle:thinking' })
+  expect(menu.set?.length).toBe(2)
+  // Changed in Claude Code's own /config menu, the lamp follows at once: dim while off.
+  menu.deny = {}
+  const lamp = async () => ((await ui.find({ type: 'Button', key: 'item:toggle:thinking' }))?.children?.[0] as { props?: { dimColor?: boolean } } | undefined)?.props?.dimColor === true
+  const inMenu = (value: boolean) => $.config.set({ key: 'thinking', value, previous: !value, provider: { plugin: 'engine', tier: 'core' }, origin: { kind: 'composer' } } as never)
+  await inMenu(false)
+  expect(await lamp()).toBe(true)
+  await inMenu(true)
+  expect(await lamp()).toBe(false)
+  // Switched for this session only (meta+t): no setting, no event; the row is asked, and says.
+  if (menu.rows?.[0]) menu.rows[0].value = false
+  await clock.advance(2000)
+  expect(await lamp()).toBe(true)
+  if (menu.rows?.[0]) menu.rows[0].value = true
+  await clock.advance(2000)
+  expect(await lamp()).toBe(false)
+  // Locked (Fable can't turn thinking off): the press is answered with why, and sets nothing.
+  menu.deny = {}
+  if (menu.rows?.[0]) menu.rows[0].isLocked = true
+  await ui.press({ key: 'item:toggle:thinking' })
+  expect(menu.set?.length).toBe(4)
+  // The reason shows in the band itself, above the rows, and clears after a few seconds.
+  expect(await ui.find({ type: 'Text', text: /^Thinking is locked on/ })).toBeDefined()
+  await clock.advance(7000)
+  expect(await ui.find({ type: 'Text', text: /^Thinking is locked on/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the lamp is a button even when locked, and dim while off', () => {
+  const x = (controls: unknown) => ({ model: { name: 'Opus 4.7', effortNow: 'medium', thinking: false, fast: false }, controls, now: 0 }) as never
+  const row = (controls: unknown) => buildSections(x(controls), parseConfig({ rows: ['model'] }), true).find((s) => s.id === 'model')
+  const words = (controls: unknown) => [...new Set(row(controls)?.items.flatMap((it) => it.wide.flatMap((r) => (r.press ? [r.press] : []))))]
+  expect(words({ thinking: { value: false, locked: false } })).toEqual(['open:model', 'open:effort', 'toggle:thinking'])
+  expect(words({ thinking: { value: false, locked: true } })).toEqual(['open:model', 'open:effort', 'toggle:thinking'])
+  expect(row({})?.items.flatMap((it) => it.wide).find((r) => r.press === 'toggle:thinking')?.d).toBe(true)
+  expect(row({})?.detail).toBeUndefined()
+  // No level known yet: the effort button still stands, as a dim `effort`.
+  const fresh = buildSections({ model: { name: 'Fable', thinking: true, fast: false }, now: 0 } as never, parseConfig({ rows: ['model'] }), false).find((s) => s.id === 'model')
+  expect(fresh?.items.flatMap((it) => it.wide).filter((r) => r.press === 'open:effort').map((r) => r.t)).toEqual(['effort'])
+  // A level an earlier build left in state under the old name is not shown either.
+  const stale = buildSections({ model: { name: 'Fable', effort: 'high', thinking: true, fast: false }, now: 0 } as never, parseConfig({ rows: ['model'] }), false).find((s) => s.id === 'model')
+  expect(stale?.items.flatMap((it) => it.wide).some((r) => r.t === 'high')).toBe(false)
+})
+
+test('the effort shows only what the engine reported, and /effort\'s own answer', async ($, on) => {
+  const menu: Menu = {}
+  const saved = { effortLevel: 'high' } // the level this session starts at
+  const clock = engine(on, {}, {}, undefined, {}, { menu, undefined: saved })
+  on('turn.step', async function* ($, e) {
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn' } as never
+  })
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  // Before any model request: the level the session starts at, dim.
+  const early = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  expect(await early.find({ type: 'Text', text: 'high' })).toMatchObject({ props: { dimColor: true } })
+  await early.unmount()
+  expect([startEffort('max', 'low'), startEffort('auto', 'low'), startEffort(undefined, 'HIGH'), startEffort(undefined, 7)]).toEqual(['max', 'low', 'high', undefined])
+  // Then the level a model request reports.
+  for await (const _ of $.turn.step({ turnId: 't1', index: 0, messageCount: 1, model: 'opus', effort: 'medium' } as never) as never as AsyncIterable<unknown>) void _
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  // Once the engine has spoken, its word wins over the starting level, in the level's color.
+  expect((await ui.find({ type: 'Text', text: 'medium' }))?.props.dimColor).toBeFalsy()
+  expect(await ui.find({ type: 'Text', text: 'high' })).toBeUndefined()
+  // The picker's own answer names the level it set; the row takes that word.
+  menu.says = 'Set effort level to xhigh (this session only)'
+  await ui.press({ key: 'item:open:effort' })
+  expect(menu.ran).toEqual(['/effort'])
+  expect([(await ui.find({ type: 'Text', text: 'medium' })) !== undefined, effortSaid(menu.says), effortSaid('Cancelled'), effortSaid(undefined)]).toEqual([false, 'xhigh', undefined, undefined])
+  // The picker's answer, as the row it leaves in the conversation: the signal that always arrives.
+  const row = (text: string, door: string, kind = 'engine') => $.session.append({ message: { type: 'system', name: 'local_command', content: [{ type: 'text', text }] }, door, origin: { kind }, uuid: 'u1' } as never)
+  await row('<local-command-stdout>Set effort level to low (this session only): Quick</local-command-stdout>', 'command')
+  expect((await ui.find({ type: 'Text', text: 'low' }))?.props.dimColor).toBeFalsy()
+  // The model merely talking about effort changes nothing.
+  await row('I set effort level to high for you', 'notice', 'model')
+  expect(await ui.find({ type: 'Text', text: 'low' })).toBeDefined()
+  // Typed by the person, /effort is heard too.
+  menu.says = 'Set effort level to medium (saved as your default for new sessions): Balanced'
+  await $.command.run({ command: 'effort', args: 'medium', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } } as never)
+  expect(await ui.find({ type: 'Text', text: 'medium' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('clicking the folder opens it in the file manager, or says it could not', async ($, on) => {
+  const files: Record<string, string> = {}
+  const clock = engine(on, files)
+  await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await ui.press({ key: 'item:reveal:cwd' })
+  expect(files.opened).toBe('/work')
+  files['no opener'] = 'yes'
+  await ui.press({ key: 'item:reveal:cwd' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't open \/work/ })).toBeDefined()
   await ui.unmount()
 })

@@ -23,6 +23,7 @@ import {
   type AgentEntry,
   collectApi,
   collectBreakdown,
+  collectControls,
   collectCounts,
   collectHost,
   collectInfo,
@@ -33,6 +34,7 @@ import {
   platform,
   readJson,
   removeLegacy,
+  revealFolder,
 } from './collect'
 import { ROW_IDS, SECTION_WIDTH, clampScroll, legendLines, listRows, packSection, plan, stackRuns, stripLabels, truncate, windowDetail, type DetailWindow, type Line, type RowId, type Run } from './layout'
 import { DRILLS, buildSections, drillEntries, drillText, isDrill, parseConfig, type DrillId } from './sections'
@@ -46,6 +48,11 @@ const info = atom({ plugin: 'statusline-dashboard', key: 'info' } as const, null
 const counts = atom({ plugin: 'statusline-dashboard', key: 'counts' } as const, null)
 const api = atom({ plugin: 'statusline-dashboard', key: 'api' } as const, null)
 const activity = atom({ plugin: 'statusline-dashboard', key: 'activity' } as const, null)
+const controls = atom({ plugin: 'statusline-dashboard', key: 'controls' } as const, null)
+const notice = atom({ plugin: 'statusline-dashboard', key: 'notice' } as const, null)
+
+/** How long a notice stays above the rows. */
+const NOTICE_MS = 6000
 const view = atom({ plugin: 'statusline-dashboard', key: 'view' } as const, { isVisible: true, expanded: [] } as View)
 const config = atom({ plugin: 'statusline-dashboard', key: 'config' } as const, null as unknown)
 const tick = atom({ plugin: 'statusline-dashboard', key: 'tick' } as const, 0)
@@ -131,6 +138,103 @@ async function toggleDrill($: EngineInterface, id: DrillId, open?: boolean): Pro
 }
 
 /**
+ * Says something where the person is looking: a line above the band's first row, gone after a few
+ * seconds. The answer to a click in the band belongs beside it; a toast lands in the far corner
+ * of the screen, where the two don't read as cause and effect.
+ */
+async function say($: EngineInterface, text: string): Promise<void> {
+  const at = await $.clock.now()
+  await update($, notice, () => ({ text, at }))
+  $.clock.after(NOTICE_MS, () => void update($, notice, (n) => (n?.at === at ? null : n)))
+}
+
+// Thinking can be switched for the session alone (meta+t, `chat:thinkingToggle`): that writes no
+// setting and raises no event a mod hears, `config.set` included. The /config row does show it,
+// so the row is asked this often; an in-process read, and nothing is written unless it changed.
+const CONTROLS_MS = 2000
+
+async function refreshControls($: EngineInterface): Promise<void> {
+  const c = await collectControls($)
+  if (!c) return
+  // Asked every couple of seconds (see CONTROLS_MS): write, and so redraw, only on a change.
+  const was = (await read($, controls))?.thinking
+  if (was?.value !== c.thinking?.value || was?.locked !== c.thinking?.locked) await update($, controls, () => c)
+  // The row is the engine's word on thinking, for this session: the lamp follows it over the
+  // saved setting, which a session-only change (meta+t) never touches.
+  const on = c.thinking?.value
+  if (on === undefined || (await $.env.get('MAX_THINKING_TOKENS'))) return
+  if ((await read($, model))?.thinking !== on) await update($, model, (m) => (m ? { ...m, thinking: on } : m))
+}
+
+/** Thinking was just set to `value` (the lamp, or the /config menu): the lamp shows it now. */
+async function showThinking($: EngineInterface, value: boolean): Promise<void> {
+  await update($, model, (m) => (m ? { ...m, thinking: value } : m))
+  await update($, controls, (c) => (c?.thinking ? { ...c, thinking: { ...c.thinking, value } } : c))
+}
+
+/**
+ * Opens one of Claude Code's own pickers, /model or /effort, as if the person typed the command.
+ * /model has the models this account is offered, by version, and the consent steps some need;
+ * /effort knows the levels the model takes. A mod can list neither. Where a plugin may not run
+ * the command now, it is put in the prompt box for the person's Enter.
+ */
+async function openPicker($: EngineInterface, command: 'model' | 'effort'): Promise<void> {
+  let said: string | undefined
+  try {
+    said = (await $.command.run({ command })).text
+  } catch {
+    await $.prompt.fill({ text: `/${command}` }).catch(() => undefined)
+    await say($, `Press Enter to open /${command}`)
+    return
+  }
+  await refreshBreakdown($)
+  // Where /effort's answer does come back as the command's result, take it; the row the answer
+  // leaves in the conversation is the signal that always arrives (the session.append hook).
+  const level = command === 'effort' ? effortSaid(said) : undefined
+  if (level) await update($, model, (m) => (m ? { ...m, effortNow: level } : m))
+}
+
+/** The level a session starts at: the env override when it names one, else the saved setting. */
+export function startEffort(env: string | undefined, setting: unknown): string | undefined {
+  const level = (v: unknown) => (typeof v === 'string' && /^(low|medium|high|xhigh|max)$/i.test(v) ? v.toLowerCase() : undefined)
+  return level(env) ?? level(setting)
+}
+
+/**
+ * The level /effort's answer names, when it names one: "Set effort level to medium (saved as your
+ * default for new sessions): …", "… (this session only)", "Kept effort level as high".
+ */
+export function effortSaid(text: string | undefined): string | undefined {
+  return text?.match(/\b(?:set|kept) effort level (?:to|as) ["'`]?(low|medium|high|xhigh|max)\b/i)?.[1]?.toLowerCase()
+}
+
+/** The text a conversation row holds: its text blocks, joined. */
+function rowText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content.map((b) => (b && typeof b === 'object' && typeof (b as { text?: unknown }).text === 'string' ? (b as { text: string }).text : '')).join('\n')
+}
+
+async function toggleThinking($: EngineInterface): Promise<void> {
+  const m = await read($, model)
+  if (!m) return
+  // The engine locks the row for a model that can't turn thinking off, and for a managed setting.
+  await refreshControls($)
+  if ((await read($, controls))?.thinking?.locked) {
+    await say($, `Thinking is locked ${m.thinking ? 'on' : 'off'}: this model can't change it, or a managed setting owns it`)
+    return
+  }
+  const value = !m.thinking
+  const res = await $.config.set({ key: 'thinking', value }).catch((e) => ({ deny: String(e) }))
+  if (res.deny !== undefined) {
+    await say($, `Thinking not changed: ${res.deny}`)
+    return
+  }
+  await showThinking($, value)
+  await refreshControls($)
+}
+
+/**
  * Moves a row's detail window by `by` lines, within its ends. Back where it stands unscrolled, the
  * row's entry is dropped, so a history standing at its newest line keeps following it.
  */
@@ -144,11 +248,23 @@ async function scrollRow($: EngineInterface, id: RowId, by: number): Promise<voi
   })
 }
 
-/** What a pressed run does: `drill:<item>` opens that item's list, `page:<row>:±1` turns that row's detail a page. */
+async function revealCwd($: EngineInterface): Promise<void> {
+  const dir = await $.session.cwd()
+  if (!(await revealFolder($, dir))) await say($, `Couldn't open ${dir} in the file manager`)
+}
+
+/**
+ * What a pressed run does: `drill:<item>` opens that Config item's list, `page:<row>:±1` turns
+ * that row's detail a page, `open:model|effort` opens that picker, `toggle:thinking` flips the lamp,
+ * `reveal:cwd` opens the working directory in the file manager.
+ */
 async function press($: EngineInterface, word: string): Promise<void> {
-  const [verb, arg = '', dir = ''] = word.split(':')
+  const [verb, arg = '', value = ''] = word.split(':')
   if (verb === 'drill' && isDrill(arg)) await toggleDrill($, arg)
-  else if (verb === 'page') await scrollRow($, arg as RowId, Number(dir) * (drawn.rows[arg as RowId]?.rows ?? 1))
+  else if (verb === 'open' && (arg === 'model' || arg === 'effort')) await openPicker($, arg)
+  else if (verb === 'toggle' && arg === 'thinking') await toggleThinking($)
+  else if (verb === 'reveal' && arg === 'cwd') await revealCwd($)
+  else if (verb === 'page') await scrollRow($, arg as RowId, Number(value) * (drawn.rows[arg as RowId]?.rows ?? 1))
 }
 
 async function refreshUsage($: EngineInterface): Promise<void> {
@@ -161,13 +277,22 @@ async function refreshBreakdown($: EngineInterface): Promise<void> {
   if (b) await update($, breakdown, () => b)
   const name = await $.session.model().catch(() => '')
   const settings = (await $.settings.read().catch(() => ({}))) as Record<string, unknown>
-  // Thinking is on unless something turns it off: the setting reads "absent or true = enabled",
-  // and MAX_THINKING_TOKENS, when set, decides alone (0 = off), as the engine's own check does.
+  // Thinking is on unless something turns it off: MAX_THINKING_TOKENS, when set, decides alone
+  // (0 = off), as the engine's own check does. Otherwise the /config row says, once it has been
+  // read: a change made in the session is in the row at once, and this runs after every turn, so
+  // the setting (absent or true = enabled) must not put an older answer back over it.
   const budget = await $.env.get('MAX_THINKING_TOKENS')
-  const thinking = budget ? Number(budget) > 0 : settings.alwaysThinkingEnabled !== false
+  const row = (await read($, controls))?.thinking?.value
+  const thinking = budget ? Number(budget) > 0 : (row ?? settings.alwaysThinkingEnabled !== false)
+  const effortSaved = startEffort(await $.env.get('CLAUDE_CODE_EFFORT_LEVEL'), settings.effortLevel)
   await update($, model, (m) => ({
     name: name || m?.name || 'Unknown Model',
-    effort: m?.effort,
+    // The level in force is the engine's own word (turn.step, /effort's answer). Until it has
+    // spoken — a session that has made no request yet — the row falls back to the level a session
+    // starts at, drawn dim: right for a fresh or resumed session, and only ever wrong for a
+    // session whose /effort change this mod was not loaded to hear.
+    effortNow: m?.effortNow,
+    effortSaved,
     thinking,
     fast: settings.fastMode === true,
   }))
@@ -252,7 +377,7 @@ async function refreshApi($: EngineInterface, force = false): Promise<void> {
 async function refreshAll($: EngineInterface): Promise<void> {
   await loadConfig($)
   await Promise.all([refreshUsage($), refreshBreakdown($), refreshInfo($), refreshRepo($), refreshHost($), refreshAgents($)])
-  await Promise.all([refreshCounts($), refreshApi($)])
+  await Promise.all([refreshCounts($), refreshApi($), refreshControls($)])
 }
 
 // Every minute: the clock, reset countdowns and pace move with nothing else changing; the config
@@ -393,6 +518,7 @@ export const register: Register = (on) => {
     // the first prompt; the band fills in as each piece lands.
     $.clock.after(0, () => void refreshAll($).then(() => warnLegacy($)))
     $.clock.every(60e3, () => void everyMinute($))
+    $.clock.every(CONTROLS_MS, () => void refreshControls($))
     return next(e)
   })
 
@@ -419,9 +545,9 @@ export const register: Register = (on) => {
   on('turn.step', async function* ($, e, next) {
     if (e.agentId !== undefined) return yield* next(e)
     const started = await $.clock.now()
-    if (typeof e.effort === 'string') {
-      const effort = e.effort
-      await update($, model, (m) => (m ? { ...m, effort } : m))
+    if (typeof e.effort === 'string' || typeof e.effort === 'number') {
+      const effort = String(e.effort)
+      await update($, model, (m) => (m ? { ...m, effortNow: effort } : m))
     }
     try {
       return yield* next(e)
@@ -478,6 +604,37 @@ export const register: Register = (on) => {
     // A foreground agent's call returns as the agent finishes: look before the roster drops it.
     if (name === 'Agent' || name === 'Task') await refreshAgents($)
     return result
+  }).catch(($, e, next) => next(e)) // observing only: on a failure, carry on as if unhooked
+
+  // /effort's answer ("Set effort level to medium …") is the one word on the level in force
+  // between model requests, and it reaches a mod in one place for certain: the row it leaves in
+  // the conversation, raised here once as it is stored, however the command was run (typed,
+  // clicked in the band, its picker confirmed with Enter or `s`). The command's own result does
+  // not carry it for the picker, and the saved setting is silent on a session-only pick.
+  on('session.append', { door: ['command', 'notice'] }, async ($, e, next) => {
+    const stored = await next(e)
+    if (e.agentId === undefined && e.origin.kind !== 'model') {
+      const level = effortSaid(rowText(e.message.content))
+      if (level) await update($, model, (m) => (m ? { ...m, effortNow: level } : m))
+    }
+    return stored
+  }).catch(($, e, next) => next(e)) // observing only: on a failure, carry on as if unhooked
+
+  // The same answer where it does come back as the command's result (a typed `/effort high`).
+  on('command.run', { command: 'effort' }, async ($, e, next) => {
+    const result = await next(e)
+    const level = effortSaid(result.text)
+    if (level) await update($, model, (m) => (m ? { ...m, effortNow: level } : m))
+    return result
+  }).catch(($, e, next) => next(e)) // observing only: on a failure, carry on as if unhooked
+
+  // Thinking changed in Claude Code's own /config menu (or by the lamp): the row is written as
+  // `next` resolves, so the lamp is told here, at once (a session-only switch: CONTROLS_MS).
+  // What follows `next` can't fail the hook: a failure then would have the row written twice.
+  on('config.set', { key: 'thinking' }, async ($, e, next) => {
+    const res = await next(e)
+    if (res.deny === undefined && typeof res.value === 'boolean') await showThinking($, res.value).catch(() => undefined)
+    return res
   }).catch(($, e, next) => next(e)) // observing only: on a failure, carry on as if unhooked
 
   on('command.run', { command: 'dash' }, async ($, e) => {
@@ -562,6 +719,7 @@ export const register: Register = (on) => {
       counts: await read($, counts),
       api: await read($, api),
       activity: await read($, activity),
+      controls: await read($, controls),
       now,
     }
     const glyphs = e.surface === 'terminal'
@@ -574,7 +732,9 @@ export const register: Register = (on) => {
     // the status line did, leaving the transcript room.
     const vp = e.viewport
     const room = vp?.isFullscreen === false ? Math.floor(vp.rows / 3) : e.props.maxRows
-    const budget = Math.max(1, Math.min(room, e.props.maxRows, cfg.maxRows))
+    // A notice takes one line of the budget while it shows, so the rows plan around it.
+    const said = await read($, notice)
+    const budget = Math.max(1, Math.min(room, e.props.maxRows, cfg.maxRows) - (said ? 1 : 0))
 
     const drill = isDrill(v.drill) && v.expanded.includes('config') ? v.drill : undefined
     const sections = buildSections(inputs, cfg, glyphs, width - indent, drill)
@@ -673,6 +833,11 @@ export const register: Register = (on) => {
     }
     return (
       <Box flexDirection="column" paddingTop={pad}>
+        {said ? (
+          <Text key="notice" color="warning">
+            {truncate(said.text, width)}
+          </Text>
+        ) : null}
         {rows}
       </Box>
     )

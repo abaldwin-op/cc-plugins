@@ -4,7 +4,7 @@
 // Widget ids (`model.effort`, `repo.pr`, …) are the user config's `hide` ids; the README table
 // and the configure skill's id list must stay in sync with the `on(...)` calls below.
 
-import type { Activity, ApiUsage, Breakdown, Counts, Entry, Host, Info, Model, Repo, Scopes, Usage } from '../types'
+import type { Activity, ApiUsage, Breakdown, Controls, Counts, Entry, Host, Info, Model, Repo, Scopes, Usage } from '../types'
 import {
   BAD,
   GOOD,
@@ -169,6 +169,8 @@ export type Inputs = {
   counts: Counts | null
   api: ApiUsage | null
   activity: Activity | null
+  /** What the Model row's pickers can change; absent in older fixtures and before the first read. */
+  controls?: Controls | null
   now: number
 }
 
@@ -283,12 +285,25 @@ function activityDetail(x: Inputs, on: (id: string) => boolean): Pick<Section, '
   return { detail: lines, detailAt: at }
 }
 
+/** A commit's page on the host, for the ones that have it: GitHub, GitLab, Bitbucket. */
+export function commitUrl(remote: Repo['remote'], sha: string): string | undefined {
+  if (!remote || !sha) return undefined
+  const h = remote.host.toLowerCase()
+  const path = h.includes('github') ? 'commit' : h.includes('gitlab') ? '-/commit' : h.includes('bitbucket') ? 'commits' : ''
+  return path ? `https://${remote.host}/${remote.owner}/${remote.name}/${path}/${sha}` : undefined
+}
+
 // The last commit and the first changed paths, colored like the branch counts.
 function repoDetail(x: Inputs, on: (id: string) => boolean): Run[][] {
   const r = x.repo
   if (!r || !on('repo.files')) return []
   const lines: Run[][] = []
-  if (r.lastCommit) lines.push([v(r.lastCommit.sha, MAGENTA), v(` ${r.lastCommit.subject}`), d(`  ${ago(x.now - r.lastCommit.at)}`)])
+  if (r.lastCommit) {
+    // The short id links to the commit's page once a remote branch holds it; before the push
+    // the page would be a 404, so it stays plain text.
+    const href = r.lastCommit.pushed ? commitUrl(r.remote, r.lastCommit.sha) : undefined
+    lines.push([{ t: r.lastCommit.sha, c: MAGENTA, ...(href ? { href } : {}) }, v(` ${r.lastCommit.subject}`), d(`  ${ago(x.now - r.lastCommit.at)}`)])
+  }
   for (const f of r.files ?? []) {
     const [mark, col] = f.xy === '??' ? ['?', BBLUE] : f.xy.includes('U') ? ['!', BAD] : f.xy[0] !== '.' ? ['+', GOOD] : ['~', WARN]
     lines.push([v(`${mark} `, col), v(f.path)])
@@ -345,12 +360,26 @@ export function effortRuns(level: string, icon: Icon): Run[] {
   }
 }
 
+// The row's three controls are buttons (`Run.press`). The model name and the effort open Claude
+// Code's own pickers (`open:model`, `open:effort`): no API lists the models it offers, and its
+// effort picker knows which levels the model takes. The lamp turns thinking on or off where it
+// stands (`toggle:thinking`) — so it shows dim while thinking is off, where it used to show only
+// while on, or there would be nothing to press to turn it back on.
 function modelRow(x: Inputs, cfg: Config, on: (id: string) => boolean, icon: Icon): Section {
   const items: Item[] = []
   const m = x.model
-  if (m) items.push(plain([...icon(G.model, CYAN), { t: m.name, b: true }, ...(m.fast ? [v(' '), ...icon(G.speed, WARN)] : [])]))
-  const think = m?.thinking && on('model.thinking') ? icon(G.think, c256(183)) : []
-  if (m?.effort && on('model.effort')) items.push(plain([...effortRuns(m.effort, icon), ...(think.length ? [v(' '), ...think] : [])]))
+  const button = (runs: Run[], word: string): Run[] => runs.map((r) => ({ ...r, press: word }))
+  if (m) items.push(plain([...button([...icon(G.model, CYAN), { t: m.name, b: true }], 'open:model'), ...(m.fast ? [v(' '), ...icon(G.speed, WARN)] : [])]))
+  // Always a button, dim while off. Where the engine locks the setting (a model that can't turn
+  // thinking off, a managed setting) the press says so: a lamp that just ignores clicks reads as broken.
+  const lamp: Run[] = m && on('model.thinking') ? icon(G.think, m.thinking ? c256(183) : undefined).map((r, i) => (i === 0 && !m.thinking ? { ...r, d: true } : r)) : []
+  const think = button(lamp, 'toggle:thinking')
+  // The level the engine reported, in its colors; before it has spoken, the level the session
+  // started at, dim (not yet confirmed by a request); with neither, a dim `effort`. Always a
+  // button: it is the way to /effort, and a row that drops it reads as "can't be changed".
+  const level = m?.effortNow ? effortRuns(m.effortNow, icon) : [...icon(G.effort, SILVER), d(m?.effortSaved ?? 'effort')]
+  const effort = m && on('model.effort') ? button(level, 'open:effort') : []
+  if (effort.length) items.push(plain([...effort, ...(think.length ? [v(' '), ...think] : [])]))
   else if (think.length) items.push(plain(think))
   const u = x.usage
   if (u && on('model.context')) {
@@ -748,7 +777,8 @@ function infoRow(x: Inputs, on: (id: string) => boolean, icon: Icon): Section {
   const i = x.info
   if (!i) return { id: 'info', label: 'Info.', items }
   const cwd = shortenPath(homeRelative(i.cwd, i.home))
-  if (cwd && on('info.cwd')) items.push(plain([...icon(G.dir, BBLUE), v(cwd)]))
+  // A button: it opens the folder in the file manager (`reveal:cwd`).
+  if (cwd && on('info.cwd')) items.push(plain([...icon(G.dir, BBLUE), v(cwd)].map((r) => ({ ...r, press: 'reveal:cwd' }))))
   if (i.outputStyle && i.outputStyle.toLowerCase() !== 'default' && on('info.style')) items.push(plain([...icon(G.style, PENCIL), v(i.outputStyle)]))
   if (i.version && on('info.version')) items.push(plain([...icon(G.version), v(`v${i.version}`)]))
   if (i.agent && on('info.agent')) items.push(plain([...icon(G.user, SILVER), v(i.agent)]))

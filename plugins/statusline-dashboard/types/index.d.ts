@@ -74,10 +74,30 @@ export type Breakdown = {
 /** What the model row shows beyond the model name. */
 export type Model = {
   name: string
-  /** The last model request's effort level (turn.step reports it); absent on models without one. */
-  effort?: string
+  /**
+   * The effort level in force, by the engine's own word: the last model request's (turn.step), or
+   * the level /effort's answer named. Absent until one of them has spoken, and on models without
+   * effort. (Named `effortNow`, not `effort`: a 2.2 pre-release kept the saved setting under that
+   * name, which is not the level in force, and state outlives a reload.)
+   */
+  effortNow?: string
+  /**
+   * The level a session starts at: `CLAUDE_CODE_EFFORT_LEVEL`, else the `effortLevel` setting. What
+   * the row shows (dim) until the engine has spoken; an /effort change made in the session is
+   * not in it, which is why it never stands in for `effortNow` once that is known.
+   */
+  effortSaved?: string
   thinking: boolean
   fast: boolean
+}
+
+/**
+ * What the Model row's lamp acts on, as Claude Code's own `/config` menu holds it
+ * (`$.config.list()`): whether thinking is on, and `locked` when a managed setting owns the row,
+ * so a change would be refused.
+ */
+export type Controls = {
+  thinking?: { value: boolean; locked: boolean }
 }
 
 export type Repo = {
@@ -100,7 +120,8 @@ export type Repo = {
   /** For the open view: the first changed paths with their two-letter status, and the last commit. */
   files?: Array<{ xy: string; path: string }>
   changedTotal?: number
-  lastCommit?: { sha: string; subject: string; at: number }
+  /** `pushed`: a remote-tracking branch holds the commit (as of the last fetch), so its page exists on the host. */
+  lastCommit?: { sha: string; subject: string; at: number; pushed?: boolean }
 }
 
 export type Host = {
@@ -212,6 +233,12 @@ declare module 'claude-code' {
       counts: Counts | null
       api: ApiUsage | null
       activity: Activity | null
+      controls: Controls | null
+      /**
+       * A line the band shows above its first row for a few seconds: what a click could not do,
+       * and why. `at` tells one notice from the next, so a timer clears only its own.
+       */
+      notice: { text: string; at: number } | null
       view: View
       /** The user config file's parsed JSON (hooks/sections.ts parseConfig reads it); null when absent. */
       config: unknown
