@@ -1,16 +1,4 @@
 {
-  "description": "Keeps a copy of agent-panel.js in the plugin's persistent data directory, where settings.json's subagentStatusLine command points (the plugin root moves with every version).",
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/scripts/stage.js\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  }
+  "description": "Mod: draws each sub-agent's and teammate's row in the agent list under the prompt (see hooks/register.ts).",
+  "modules": ["./register.ts"]
 }

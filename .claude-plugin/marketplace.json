@@ -23,14 +23,14 @@
     {
       "name": "agent-panel",
       "source": "./plugins/agent-panel",
-      "description": "Styles the agent panel's rows for sub-agents and agent-team teammates: name or type, live progress, model and effort, a colored status glyph, elapsed time and tokens. Nothing written to your settings. Requires Bun.",
+      "description": "Mod: styles the agent rows under the prompt for sub-agents and agent-team teammates: name or type, live progress, model and effort, a colored status glyph, elapsed time and tokens. Requires Claude Code 2.1.323+.",
       "category": "productivity",
       "tags": [
-        "subagent-statusline",
+        "mod",
         "agents",
         "agent-teams",
-        "nerd-fonts",
-        "bun"
+        "agent-row",
+        "nerd-fonts"
       ]
     },
     {

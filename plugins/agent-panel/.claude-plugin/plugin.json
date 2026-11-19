@@ -1,11 +1,12 @@
 {
   "name": "agent-panel",
   "displayName": "Agent Panel",
-  "version": "1.0.2",
-  "description": "Styles the rows of Claude Code's agent panel for sub-agents and agent-team teammates: name or type, live progress, model and effort, a colored status glyph, elapsed time and tokens. Nothing written to your settings. Requires Bun.",
+  "version": "2.0.0",
+  "description": "A mod: styles the rows of Claude Code's agent list under the prompt for sub-agents and agent-team teammates: name or type, live progress, model and effort, a colored status glyph, elapsed time and tokens. Requires Claude Code 2.1.323+.",
   "author": { "name": "Anthony Baldwin", "url": "https://github.com/anthonybaldwin" },
   "homepage": "https://github.com/anthonybaldwin/cc-plugins/tree/main/plugins/agent-panel",
   "repository": "https://github.com/anthonybaldwin/cc-plugins",
   "license": "MIT",
-  "keywords": ["subagent-statusline", "agents", "agent-teams", "agent-panel", "nerd-fonts", "bun"]
+  "keywords": ["mod", "agents", "agent-teams", "agent-panel", "agent-row", "nerd-fonts"],
+  "types": "./types/index.d.ts"
 }

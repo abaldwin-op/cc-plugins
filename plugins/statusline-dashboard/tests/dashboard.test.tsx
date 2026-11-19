@@ -436,11 +436,11 @@ test('pressing a row label opens it, remembers it, and the Model row shows the c
   await ui.unmount()
 })
 
-test('/dash hides the band and shows it again; a survey or another mod\'s note wins over it', async ($, on) => {
-  // Beneath: another mod's note while one is up (the built-in tips), or a survey.
-  let note = false
+// Another mod's note no longer competes for this tree: the engine asks each plugin for its own
+// band row and stacks them (AbovePromptList), so only a survey takes the band here.
+test('/dash hides the band and shows it again; a survey wins over it', async ($, on) => {
   const clock = engine(on, {}, {}, ($, e) => {
-    if (!note && !e.props.hasSurvey) return undefined
+    if (!e.props.hasSurvey) return undefined
     const { Text } = $.ui.resolve(e)
     return <Text>drawn beneath</Text>
   })
@@ -460,12 +460,6 @@ test('/dash hides the band and shows it again; a survey or another mod\'s note w
   await ui.unmount()
 
   ui = await $.ui.mount({ ...BAND, surface: 'terminal', props: { ...BAND.props, hasSurvey: true } })
-  expect(await ui.find({ type: 'Text', text: 'drawn beneath' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeUndefined()
-  await ui.unmount()
-
-  note = true
-  ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: 'drawn beneath' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'Opus 4.7' })).toBeUndefined()
   await ui.unmount()

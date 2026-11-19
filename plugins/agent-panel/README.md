@@ -1,25 +1,24 @@
 # agent-panel
 
-Styles the rows of Claude Code's **agent panel**, the list under the prompt that shows each
-running sub-agent and agent-team teammate. Each row reads:
+A mod that styles Claude Code's **agent rows**, the list under the prompt that shows each running
+sub-agent and agent-team teammate. Each row reads:
 
 ```
 󰚩 Explore · Reading the hooks · haiku-4-5 low · ● 1m · 12K tok
 󰀄 reviewer · Review the diff · ◌
 ```
 
-- A robot icon marks a sub-agent and a person icon marks a teammate, so a mixed panel shows who is on
+- A robot icon marks a sub-agent and a person icon marks a teammate, so a mixed list shows who is on
   the team and who is a helper.
-- **Name**: the agent's name. A generic name such as `local_agent` gives way to the sub-agent type
-  (`Explore`), or to the task description.
+- **Name**: the agent's name, else its sub-agent type (`Explore`), else the task description.
 - **Progress**: the agent's live progress summary, or its description when there is none.
 - **Model and effort**: for example `haiku-4-5 low`.
-- **Status glyph**: ● running (yellow), ✔ done (green), ✘ failed (red), ○ pending, ◌ an idle
-  teammate waiting for its next message.
+- **Status glyph**: ● running (yellow), ○ waiting on you (yellow), ✔ done (green), ✘ failed
+  (red), ✘ stopped (grey), ○ pending, ◌ an idle teammate waiting for its next message.
 - **Elapsed time** and **tokens used**.
 
-Rows are cut to the panel's width, never wrapped. It uses Claude Code's
-[`subagentStatusLine`](https://code.claude.com/docs/en/statusline#subagent-status-lines).
+Rows are cut to the list's width, never wrapped. Terminal only: the desktop app and VS Code keep
+their own rows. It draws through the `AgentRow` render hook.
 
 ## Install
 
@@ -28,22 +27,21 @@ Rows are cut to the panel's width, never wrapped. It uses Claude Code's
 /plugin install agent-panel@cc-plugins
 ```
 
-Then **start a new session**: Claude Code reads a plugin's settings when a session starts. Nothing
-is written to your settings. The plugin's own `settings.json` supplies `subagentStatusLine` (a
-plugin may set that key). A `SessionStart` hook keeps a copy of the script in the plugin's data
-directory, `~/.claude/plugins/data/agent-panel-cc-plugins/`, because the plugin's install path
-changes with every update.
+Requires **Claude Code 2.1.323+** and a [**Nerd Font**](https://www.nerdfonts.com/) for the robot
+and person icons. Nothing is written to your settings.
 
-## Requirements
+### Upgrading from 1.x
 
-- [**Bun**](https://bun.sh), which runs the script.
-- A [**Nerd Font**](https://www.nerdfonts.com/) for the robot and person icons.
+1.x drew the rows with a Bun script behind the plugin's `subagentStatusLine` setting, which Claude
+Code 2.1.323 removed (rows went back to the default look). 2.0 is a mod and needs neither the
+setting nor Bun. A `subagentStatusLine` left in your own `~/.claude/settings.json` now does
+nothing: `/dash cleanup` removes the one statusline-dashboard 1.x wrote; delete any other by hand.
 
 ## Configuration
 
 To hide parts of a row, add their ids to the `hide` list in `~/.claude/statusline-dashboard.json`.
 That file is shared with [statusline-dashboard](../statusline-dashboard/), and
-`CLAUDE_STATUSLINE_CONFIG` points it elsewhere.
+`CLAUDE_STATUSLINE_CONFIG` points it elsewhere. It's read at session start.
 
 | Id | Hides |
 | --- | --- |
@@ -52,24 +50,6 @@ That file is shared with [statusline-dashboard](../statusline-dashboard/), and
 | `subagent.elapsed` | Elapsed time |
 | `subagent.tokens` | Token count |
 
-A `subagentStatusLine` in your own `~/.claude/settings.json` takes precedence over the plugin's.
-If you used statusline-dashboard 1.x, run `/dash cleanup` once to remove the block it wrote,
-otherwise that block keeps overriding this plugin.
-
 ## Uninstall
 
-`/plugin uninstall agent-panel@cc-plugins`. This removes the setting and the data directory, and
-the agent panel goes back to Claude Code's default rows.
-
-## Troubleshooting
-
-If the rows stay plain after a new session:
-
-- Make sure you started a new session after installing or updating. The first one also stages the
-  script.
-- Check `~/.claude/settings.json` for a `subagentStatusLine` of your own, for example one left by
-  statusline-dashboard 1.x. Yours takes precedence over the plugin's. `/dash cleanup` removes the
-  1.x one.
-- Run `claude --debug`, start a sub-agent, and look for `subagentStatusLine` in the log. An
-  `exited` line gives the error, and `workspace trust not accepted` means the folder hasn't been
-  trusted.
+`/plugin uninstall agent-panel@cc-plugins`. The agent rows go back to Claude Code's default look.

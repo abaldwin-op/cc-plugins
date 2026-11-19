@@ -115,18 +115,16 @@ anything visual (the test kit checks the tree, not the paint).
 
 ## plugins/agent-panel
 
-The agent panel's rows (`subagentStatusLine`) for sub-agents and agent-team teammates, split out
-of statusline-dashboard 1.x. `agent-panel.js` is a single-file Bun script: JSON on stdin (`columns`,
-`tasks[]`), one `{"id","content"}` line per row out, every row clamped to `columns - 1` cells with
-`vlen` (Nerd Font PUA glyphs count 2). Wiring needs no settings edit: the plugin's root
-`settings.json` sets `subagentStatusLine` (with `agent`, the only keys a plugin's settings take),
-and its command (`bun -e "import(…)"`, resolving `CLAUDE_CONFIG_DIR` or the home dir in JS so it
-runs the same under bash, cmd and PowerShell — Claude Code picks the shell on Windows) loads
-`<config dir>/plugins/data/agent-panel-cc-plugins/agent-panel.js`, which `scripts/stage.js` (SessionStart hook; silent, always exit 0) keeps current — the docs
-promise no `${CLAUDE_PLUGIN_ROOT}` substitution in that command, and the root moves per version.
-The path in `settings.json` and the data dir must agree. A user's own `subagentStatusLine` in
-`~/.claude/settings.json` outranks the plugin's. It reads the `subagent.*` ids from
-statusline-dashboard's config file's `hide` list.
+A **mod** that draws the agent rows under the prompt for sub-agents and agent-team teammates, split
+out of statusline-dashboard 1.x. 1.x was a Bun script behind the plugin's `subagentStatusLine`
+setting; Claude Code 2.1.323 removed that setting, and 2.x draws through the `ui.render` hook on
+`{ component: 'AgentRow' }` instead, returning `next(e)` with `props.body` set (a string, SGR
+allowed). `hooks/row.ts` is the pure row builder (`renderRow`: `AgentInfo` in, string out, clamped
+to `columns - 1` cells with `vlen`, Nerd Font PUA glyphs counting 2); `hooks/register.ts` wires it
+and reads the `subagent.*` ids from statusline-dashboard's config file's `hide` list into `$.state`
+at session start. Terminal surface only (glyphs); `isHidden` stays the engine's. Load the
+`plugin-authoring` skill before editing it; same validator rules as statusline-dashboard. Tests:
+`claude plugin test plugins/agent-panel`.
 
 ## plugins/session-color
 
